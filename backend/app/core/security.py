@@ -1,7 +1,8 @@
 import datetime
 from typing import Optional, Dict, Any
 import bcrypt
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWTError
 from app.config import settings
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -26,5 +27,5 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload
-    except JWTError:
+    except PyJWTError:
         return None

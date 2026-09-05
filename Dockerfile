@@ -17,7 +17,14 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application source
 COPY backend/ ./backend/
 COPY run.py .
-COPY .env.example .env
+# NOTE: .env is intentionally NOT copied into the image. Provide runtime
+# config via `docker run --env-file .env` or docker-compose's `env_file:`,
+# so secrets never get baked into a shareable image layer.
+
+# Run as a non-root user
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 
 # Expose port
 EXPOSE 8000

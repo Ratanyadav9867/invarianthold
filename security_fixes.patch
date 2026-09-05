@@ -1,0 +1,588 @@
+diff --git a/.env.example b/.env.example
+index 2e0db7d..50fba1c 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,24 +1,32 @@
+ # InvariantHold Environment Configuration
++# Copy this file to .env and fill in real values.
++# .env is gitignored — never commit it.
+ PROJECT_NAME="InvariantHold"
+ VERSION="1.0.0"
+ ENV="development"
+ DATABASE_URL="sqlite:///./invarianthold.db"
+ 
+ # Security & JWT
+-SECRET_KEY="REDACTED_SECRET_KEY"
++# Generate with: openssl rand -hex 32
++# Required in production; auto-generated (ephemeral, logged to stdout) in development if omitted.
++SECRET_KEY=""
+ ALGORITHM="HS256"
+-ACCESS_TOKEN_EXPIRE_MINUTES=1440
++ACCESS_TOKEN_EXPIRE_MINUTES=30
++
++# CORS — comma-separated list of allowed frontend origins
++ALLOWED_ORIGINS="http://localhost:5173,http://localhost:8000"
+ 
+ # Demo Simulation Defaults
+ DEFAULT_PACKET_COUNT=1000
+ 
+-# Demo Credentials (Seeded into DB with bcrypt hashes)
++# Demo Credentials (seeded into DB with bcrypt hashes on first run)
++# Required in production; auto-generated (random, logged to stdout once) in development if omitted.
+ ADMIN_USER="admin@invarianthold.io"
+-ADMIN_PASSWORD="REDACTED_PASSWORD"
++ADMIN_PASSWORD=""
+ ANALYST_USER="analyst@invarianthold.io"
+-ANALYST_PASSWORD="REDACTED_PASSWORD"
++ANALYST_PASSWORD=""
+ VIEWER_USER="viewer@invarianthold.io"
+-VIEWER_PASSWORD="REDACTED_PASSWORD"
++VIEWER_PASSWORD=""
+ 
+ # Optional GenAI LLM Connector (Fallback rule engine works offline with zero keys)
+ # OPENAI_API_KEY="sk-..."
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..2880dcc
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,49 @@
++name: CI
++
++on:
++  push:
++    branches: [main]
++  pull_request:
++    branches: [main]
++
++jobs:
++  test-and-scan:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Set up Python
++        uses: actions/setup-python@v5
++        with:
++          python-version: "3.11"
++          cache: "pip"
++
++      - name: Install dependencies
++        run: |
++          python -m pip install --upgrade pip
++          pip install -r requirements.txt
++          pip install pip-audit ruff
++
++      - name: Lint
++        run: ruff check .
++
++      - name: Run tests
++        run: pytest -v
++        env:
++          SECRET_KEY: ci-test-key-not-for-real-use
++          ENV: development
++
++      - name: Dependency vulnerability scan
++        run: pip-audit -r requirements.txt
++        continue-on-error: true  # report findings without blocking merges initially
++
++  secret-scan:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++      - name: Scan for committed secrets
++        uses: trufflesecurity/trufflehog@main
++        with:
++          extra_args: --only-verified
+diff --git a/Dockerfile b/Dockerfile
+index c464813..d6e0d74 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -17,7 +17,14 @@ RUN pip install --no-cache-dir --upgrade pip && \
+ # Copy application source
+ COPY backend/ ./backend/
+ COPY run.py .
+-COPY .env.example .env
++# NOTE: .env is intentionally NOT copied into the image. Provide runtime
++# config via `docker run --env-file .env` or docker-compose's `env_file:`,
++# so secrets never get baked into a shareable image layer.
++
++# Run as a non-root user
++RUN useradd --create-home --shell /usr/sbin/nologin appuser \
++    && chown -R appuser:appuser /app
++USER appuser
+ 
+ # Expose port
+ EXPOSE 8000
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..718188c
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Ratanyadav9867
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/SECURITY.md b/SECURITY.md
+new file mode 100644
+index 0000000..a16579f
+--- /dev/null
++++ b/SECURITY.md
+@@ -0,0 +1,31 @@
++# Security Policy
++
++## Reporting a Vulnerability
++
++If you discover a security vulnerability in InvariantHold, please report it
++privately rather than opening a public issue.
++
++- Email: (add a contact address you monitor, e.g. security@yourdomain.com)
++- Please include: a description of the issue, steps to reproduce, and the
++  potential impact.
++- We aim to acknowledge reports within 5 business days.
++
++## Supported Versions
++
++| Version | Supported |
++| ------- | --------- |
++| main    | ✅ |
++
++## Scope
++
++This is a demo/hackathon platform (in-memory & SQLite-backed simulation of
++security invariant verification). It is not intended to be exposed to the
++public internet or connected to real production security infrastructure
++without a further security review, since:
++
++- Authentication uses short-lived JWTs signed with a symmetric key
++  (`SECRET_KEY`) that must be set via environment variables — see
++  `.env.example`.
++- Demo credentials are seeded from `ADMIN_PASSWORD` / `ANALYST_PASSWORD` /
++  `VIEWER_PASSWORD` environment variables and should be rotated before any
++  non-local use.
+diff --git a/backend/app/api/routes.py b/backend/app/api/routes.py
+index f725fa6..5fdac7c 100644
+--- a/backend/app/api/routes.py
++++ b/backend/app/api/routes.py
+@@ -76,11 +76,11 @@ def get_component(id: str, db: Session = Depends(get_db)):
+     return comp.to_dict()
+ 
+ @router.post("/components/{id}/recover")
+-def recover_component(id: str, db: Session = Depends(get_db)):
++def recover_component(id: str, db: Session = Depends(get_db), user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))):
+     result = FailureEngine.recover_component(db, id)
+     AuditEngine.record_event(
+         db,
+-        actor="API_USER",
++        actor=user.username,
+         action="COMPONENT_RECOVERED",
+         target=id,
+         details={"result": result}
+@@ -96,12 +96,12 @@ def list_invariants(db: Session = Depends(get_db)):
+     return [inv.to_dict() for inv in invariants]
+ 
+ @router.post("/invariants/verify")
+-def verify_all_invariants(db: Session = Depends(get_db)):
++def verify_all_invariants(db: Session = Depends(get_db), user: User = Depends(require_auth)):
+     graph_engine = GraphEngine(db)
+     summary = InvariantEngine.verify_all_paths(db, graph_engine)
+     AuditEngine.record_event(
+         db,
+-        actor="API_USER",
++        actor=user.username,
+         action="INVARIANTS_VERIFIED",
+         target="ALL_PATHS",
+         details={"guaranteed": summary["guaranteed"], "total": summary["total_paths"]}
+@@ -124,7 +124,7 @@ def list_affected_paths(db: Session = Depends(get_db)):
+     return [p.to_dict() for p in paths]
+ 
+ @router.post("/reroute")
+-def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db)):
++def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db), user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))):
+     if req.path_id:
+         result = ReroutingEngine.attempt_reroute_path(db, req.path_id)
+     else:
+@@ -132,7 +132,7 @@ def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db)):
+ 
+     AuditEngine.record_event(
+         db,
+-        actor="API_USER",
++        actor=user.username,
+         action="SAFE_REROUTE_EXECUTED",
+         target=req.path_id or "ALL_AFFECTED_PATHS",
+         details={"result": result}
+@@ -143,7 +143,7 @@ def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db)):
+ # 5. FAILURE INJECTION STUDIO
+ # ----------------------------------------------------
+ @router.post("/failures/inject")
+-def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db)):
++def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db), user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))):
+     result = FailureEngine.inject_failure(
+         db,
+         component_ids=req.component_ids,
+@@ -151,7 +151,7 @@ def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db)):
+     )
+     AuditEngine.record_event(
+         db,
+-        actor="API_USER",
++        actor=user.username,
+         action="FAILURE_INJECTED",
+         target=",".join(req.component_ids),
+         details={"affected_paths": result.get("affected_paths_count", 0)}
+@@ -162,7 +162,7 @@ def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db)):
+ # 6. SIMULATED TRAFFIC & PACKET VERIFIER
+ # ----------------------------------------------------
+ @router.post("/traffic/simulate")
+-def simulate_traffic(req: TrafficSimulateRequest, db: Session = Depends(get_db)):
++def simulate_traffic(req: TrafficSimulateRequest, db: Session = Depends(get_db), user: User = Depends(require_auth)):
+     result = TrafficEngine.simulate_traffic(db, packet_count=req.packet_count)
+     return result
+ 
+@@ -220,22 +220,22 @@ def get_audit_logs(limit: int = Query(default=100, le=500), db: Session = Depend
+     return [l.to_dict() for l in logs]
+ 
+ @router.post("/audit/verify")
+-def verify_audit_ledger(db: Session = Depends(get_db)):
++def verify_audit_ledger(db: Session = Depends(get_db), user: User = Depends(require_auth)):
+     return AuditEngine.verify_integrity(db)
+ 
+ # ----------------------------------------------------
+ # 9. JUDGE DEMO MODE
+ # ----------------------------------------------------
+ @router.post("/demo/run")
+-def run_judge_demo(packet_count: int = Query(default=1000), db: Session = Depends(get_db)):
++def run_judge_demo(packet_count: int = Query(default=1000), db: Session = Depends(get_db), user: User = Depends(require_auth)):
+     return DemoEngine.run_judge_demo(db, packet_count=packet_count)
+ 
+ @router.post("/demo/reset")
+-def reset_demo_environment(db: Session = Depends(get_db)):
++def reset_demo_environment(db: Session = Depends(get_db), user: User = Depends(require_role(["ADMIN"]))):
+     seed_database(db, reset=True)
+     AuditEngine.record_event(
+         db,
+-        actor="SYSTEM",
++        actor=user.username,
+         action="DEMO_ENVIRONMENT_RESET",
+         target="TOPOLOGY",
+         details={"status": "HEALTHY"}
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 73c8225..27762a1 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -1,31 +1,96 @@
+ import os
++import secrets
++import warnings
++from typing import Optional
+ from pydantic_settings import BaseSettings
++from pydantic import model_validator
+ 
+ class Settings(BaseSettings):
+     PROJECT_NAME: str = "InvariantHold"
+     VERSION: str = "1.0.0"
+     API_PREFIX: str = "/api"
+     ENV: str = "development"
+-    
++
+     # SQLite Database
+     DATABASE_URL: str = "sqlite:///./invarianthold.db"
+-    
++
+     # Security & JWT
+-    SECRET_KEY: str = "REDACTED_SECRET_KEY"
++    # No hardcoded default: must come from the environment / .env file.
++    # In development, if it's missing we generate a random one at process
++    # startup (logging a warning) instead of falling back to a known,
++    # publicly-committed string. In production this is a hard failure.
++    SECRET_KEY: Optional[str] = None
+     ALGORITHM: str = "HS256"
+-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+-    
++    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # short-lived access token
++
++    # CORS - comma-separated list of allowed origins, e.g.
++    # "http://localhost:5173,https://app.example.com"
++    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:8000"
++
+     # Simulation defaults
+     DEFAULT_PACKET_COUNT: int = 1000
+-    
+-    # Initial Demo Credentials (Hashed into DB on first seed)
++
++    # Initial Demo Credentials — no defaults. Must be supplied via
++    # environment/.env (which is gitignored) so no real or example
++    # credential is ever committed to source control.
+     ADMIN_USER: str = "admin@invarianthold.io"
+-    ADMIN_PASSWORD: str = "REDACTED_PASSWORD"
++    ADMIN_PASSWORD: Optional[str] = None
+     ANALYST_USER: str = "analyst@invarianthold.io"
+-    ANALYST_PASSWORD: str = "REDACTED_PASSWORD"
++    ANALYST_PASSWORD: Optional[str] = None
+     VIEWER_USER: str = "viewer@invarianthold.io"
+-    VIEWER_PASSWORD: str = "REDACTED_PASSWORD"
+-    
++    VIEWER_PASSWORD: Optional[str] = None
++
+     model_config = {"env_file": ".env", "extra": "ignore"}
+ 
++    @model_validator(mode="after")
++    def _validate_secrets(self):
++        if not self.SECRET_KEY:
++            if self.ENV == "production":
++                raise RuntimeError(
++                    "SECRET_KEY is not set. Refusing to start in production "
++                    "without an explicit JWT signing key. Set SECRET_KEY in "
++                    "the environment (e.g. `openssl rand -hex 32`)."
++                )
++            warnings.warn(
++                "SECRET_KEY not set — generating a random ephemeral key for "
++                "this development process. Tokens will be invalid after "
++                "restart. Set SECRET_KEY in .env to avoid this.",
++                stacklevel=2,
++            )
++            self.SECRET_KEY = secrets.token_hex(32)
++
++        missing_demo_pw = [
++            name for name, val in [
++                ("ADMIN_PASSWORD", self.ADMIN_PASSWORD),
++                ("ANALYST_PASSWORD", self.ANALYST_PASSWORD),
++                ("VIEWER_PASSWORD", self.VIEWER_PASSWORD),
++            ] if not val
++        ]
++        if missing_demo_pw:
++            if self.ENV == "production":
++                raise RuntimeError(
++                    f"Missing required credentials in production: {missing_demo_pw}. "
++                    "Set them explicitly in the environment."
++                )
++            warnings.warn(
++                f"{missing_demo_pw} not set — generating random demo passwords "
++                "for this session. Check server startup logs for the values.",
++                stacklevel=2,
++            )
++            if not self.ADMIN_PASSWORD:
++                self.ADMIN_PASSWORD = secrets.token_urlsafe(12)
++            if not self.ANALYST_PASSWORD:
++                self.ANALYST_PASSWORD = secrets.token_urlsafe(12)
++            if not self.VIEWER_PASSWORD:
++                self.VIEWER_PASSWORD = secrets.token_urlsafe(12)
++            print(
++                "\n[InvariantHold] Generated demo credentials for this session "
++                "(set these in .env to persist them):\n"
++                f"  ADMIN_PASSWORD={self.ADMIN_PASSWORD}\n"
++                f"  ANALYST_PASSWORD={self.ANALYST_PASSWORD}\n"
++                f"  VIEWER_PASSWORD={self.VIEWER_PASSWORD}\n"
++            )
++
++        return self
++
+ settings = Settings()
+diff --git a/backend/app/core/security.py b/backend/app/core/security.py
+index 4fa2093..d25a640 100644
+--- a/backend/app/core/security.py
++++ b/backend/app/core/security.py
+@@ -1,7 +1,8 @@
+ import datetime
+ from typing import Optional, Dict, Any
+ import bcrypt
+-from jose import jwt, JWTError
++import jwt
++from jwt import PyJWTError
+ from app.config import settings
+ 
+ def verify_password(plain_password: str, hashed_password: str) -> bool:
+@@ -26,5 +27,5 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
+     try:
+         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+         return payload
+-    except JWTError:
++    except PyJWTError:
+         return None
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 57fd7e4..ecc87f1 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -21,10 +21,13 @@ app = FastAPI(
+     redoc_url="/redoc"
+ )
+ 
+-# CORS middleware for local frontend development
++# CORS: explicit origin allow-list (never combine wildcard "*" with
++# allow_credentials=True — that reflects any origin back with credentials
++# enabled, which defeats the purpose of an allow-list).
++allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["*"],
++    allow_origins=allowed_origins,
+     allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 49a4494..100dfe4 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -8,11 +8,14 @@ services:
+     container_name: invarianthold-app
+     ports:
+       - "8000:8000"
++    env_file:
++      # Copy .env.example to .env and fill in real values before running.
++      # .env is gitignored and never committed — no secrets live in this file.
++      - .env
+     environment:
+       - PROJECT_NAME=InvariantHold
+       - ENV=production
+       - DATABASE_URL=sqlite:///./invarianthold.db
+-      - SECRET_KEY=REDACTED_SECRET_KEY
+       - DEFAULT_PACKET_COUNT=1000
+     restart: unless-stopped
+     healthcheck:
+diff --git a/requirements.lock.txt b/requirements.lock.txt
+new file mode 100644
+index 0000000..6433bf5
+--- /dev/null
++++ b/requirements.lock.txt
+@@ -0,0 +1,57 @@
++annotated-doc==0.0.5
++annotated-types==0.8.0
++anyio==4.15.0
++bcrypt==5.0.0
++boolean.py==5.0
++CacheControl==0.14.4
++certifi==2026.7.22
++cffi==2.1.1
++charset-normalizer==3.5.1
++click==8.5.0
++cryptography==50.0.1
++cyclonedx-python-lib==11.12.0
++defusedxml==0.7.1
++fastapi==0.141.1
++filelock==3.32.5
++greenlet==3.5.5
++h11==0.16.0
++httpcore==1.0.9
++httpx==0.28.1
++idna==3.19
++iniconfig==2.3.0
++license-expression==30.4.4
++markdown-it-py==4.2.0
++mdurl==0.1.2
++msgpack==1.2.2
++networkx==3.6.1
++packageurl-python==0.17.6
++packaging==26.3
++passlib==1.7.4
++pip-api==0.0.34
++pip-requirements-parser==32.0.1
++pip_audit==2.10.1
++platformdirs==4.11.7
++pluggy==1.6.0
++py-serializable==2.1.0
++pycparser==3.0
++pydantic==2.13.5
++pydantic-settings==2.15.0
++pydantic_core==2.46.5
++Pygments==2.21.0
++PyJWT==2.13.0
++pyparsing==3.3.2
++pytest==9.1.1
++pytest-asyncio==1.4.0
++python-dotenv==1.2.3
++requests==2.34.2
++rich==15.0.0
++six==1.17.0
++sortedcontainers==2.4.0
++SQLAlchemy==2.0.52
++starlette==1.6.0
++tomli==2.4.1
++tomli_w==1.2.0
++typing-inspection==0.4.4
++typing_extensions==4.16.0
++urllib3==2.7.0
++uvicorn==0.52.4
+diff --git a/requirements.txt b/requirements.txt
+index 69a9fa2..e7b14ae 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,12 +1,15 @@
+-fastapi>=0.110.0
+-uvicorn>=0.28.0
+-pydantic>=2.6.0
+-pydantic-settings>=2.2.0
+-sqlalchemy>=2.0.28
+-networkx>=3.2.1
+-passlib[bcrypt]>=1.7.4
+-bcrypt>=4.0.0
+-python-jose[cryptography]>=3.3.0
+-httpx>=0.27.0
+-pytest>=8.0.0
+-pytest-asyncio>=0.23.0
++# Direct dependencies, pinned to exact tested versions.
++# For a fully reproducible environment (incl. transitive deps), use:
++#   pip install -r requirements.lock.txt
++fastapi==0.141.1
++uvicorn==0.52.4
++pydantic==2.13.5
++pydantic-settings==2.15.0
++sqlalchemy==2.0.52
++networkx==3.6.1
++passlib[bcrypt]==1.7.4
++bcrypt==5.0.0
++PyJWT==2.13.0
++httpx==0.28.1
++pytest==9.1.1
++pytest-asyncio==1.4.0
+diff --git a/run.py b/run.py
+index 5ba0870..2aad1ef 100644
+--- a/run.py
++++ b/run.py
+@@ -5,6 +5,7 @@ import uvicorn
+ # Ensure backend directory is in Python path
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
+ from app.main import app
++from app.config import settings
+ 
+ def main():
+     print("=" * 70)
+@@ -14,11 +15,15 @@ def main():
+     print("  [>] REST API Docs:        http://localhost:8000/docs")
+     print("  [>] Health Check:         http://localhost:8000/health")
+     print("-" * 70)
+-    print("  Default Demo Credentials (RBAC):")
+-    print("    * ADMIN:    admin@invarianthold.io   / REDACTED_PASSWORD")
+-    print("    * ANALYST:  analyst@invarianthold.io / REDACTED_PASSWORD")
+-    print("    * VIEWER:   viewer@invarianthold.io  / REDACTED_PASSWORD")
+-    print("=" * 70)
++    if settings.ENV != "production":
++        # Only echo credentials in non-production runs, and always read them
++        # from the actually-configured settings (never hardcode them here) so
++        # this can't drift from what's really seeded into the database.
++        print("  Demo Credentials (RBAC) — set via .env, generated if absent:")
++        print(f"    * ADMIN:    {settings.ADMIN_USER}   / {settings.ADMIN_PASSWORD}")
++        print(f"    * ANALYST:  {settings.ANALYST_USER} / {settings.ANALYST_PASSWORD}")
++        print(f"    * VIEWER:   {settings.VIEWER_USER}  / {settings.VIEWER_PASSWORD}")
++        print("=" * 70)
+     print("  Starting InvariantHold Unified Server on http://0.0.0.0:8000 ...")
+     print("=" * 70)
+ 

@@ -76,11 +76,11 @@ def get_component(id: str, db: Session = Depends(get_db)):
     return comp.to_dict()
 
 @router.post("/components/{id}/recover")
-def recover_component(id: str, db: Session = Depends(get_db)):
+def recover_component(id: str, db: Session = Depends(get_db), user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))):
     result = FailureEngine.recover_component(db, id)
     AuditEngine.record_event(
         db,
-        actor="API_USER",
+        actor=user.username,
         action="COMPONENT_RECOVERED",
         target=id,
         details={"result": result}
@@ -96,12 +96,12 @@ def list_invariants(db: Session = Depends(get_db)):
     return [inv.to_dict() for inv in invariants]
 
 @router.post("/invariants/verify")
-def verify_all_invariants(db: Session = Depends(get_db)):
+def verify_all_invariants(db: Session = Depends(get_db), user: User = Depends(require_auth)):
     graph_engine = GraphEngine(db)
     summary = InvariantEngine.verify_all_paths(db, graph_engine)
     AuditEngine.record_event(
         db,
-        actor="API_USER",
+        actor=user.username,
         action="INVARIANTS_VERIFIED",
         target="ALL_PATHS",
         details={"guaranteed": summary["guaranteed"], "total": summary["total_paths"]}
@@ -124,7 +124,7 @@ def list_affected_paths(db: Session = Depends(get_db)):
     return [p.to_dict() for p in paths]
 
 @router.post("/reroute")
-def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db)):
+def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db), user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))):
     if req.path_id:
         result = ReroutingEngine.attempt_reroute_path(db, req.path_id)
     else:
@@ -132,7 +132,7 @@ def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db)):
 
     AuditEngine.record_event(
         db,
-        actor="API_USER",
+        actor=user.username,
         action="SAFE_REROUTE_EXECUTED",
         target=req.path_id or "ALL_AFFECTED_PATHS",
         details={"result": result}
@@ -143,7 +143,7 @@ def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db)):
 # 5. FAILURE INJECTION STUDIO
 # ----------------------------------------------------
 @router.post("/failures/inject")
-def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db)):
+def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db), user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))):
     result = FailureEngine.inject_failure(
         db,
         component_ids=req.component_ids,
@@ -151,7 +151,7 @@ def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db)):
     )
     AuditEngine.record_event(
         db,
-        actor="API_USER",
+        actor=user.username,
         action="FAILURE_INJECTED",
         target=",".join(req.component_ids),
         details={"affected_paths": result.get("affected_paths_count", 0)}
@@ -162,7 +162,7 @@ def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db)):
 # 6. SIMULATED TRAFFIC & PACKET VERIFIER
 # ----------------------------------------------------
 @router.post("/traffic/simulate")
-def simulate_traffic(req: TrafficSimulateRequest, db: Session = Depends(get_db)):
+def simulate_traffic(req: TrafficSimulateRequest, db: Session = Depends(get_db), user: User = Depends(require_auth)):
     result = TrafficEngine.simulate_traffic(db, packet_count=req.packet_count)
     return result
 
@@ -220,22 +220,22 @@ def get_audit_logs(limit: int = Query(default=100, le=500), db: Session = Depend
     return [l.to_dict() for l in logs]
 
 @router.post("/audit/verify")
-def verify_audit_ledger(db: Session = Depends(get_db)):
+def verify_audit_ledger(db: Session = Depends(get_db), user: User = Depends(require_auth)):
     return AuditEngine.verify_integrity(db)
 
 # ----------------------------------------------------
 # 9. JUDGE DEMO MODE
 # ----------------------------------------------------
 @router.post("/demo/run")
-def run_judge_demo(packet_count: int = Query(default=1000), db: Session = Depends(get_db)):
+def run_judge_demo(packet_count: int = Query(default=1000), db: Session = Depends(get_db), user: User = Depends(require_auth)):
     return DemoEngine.run_judge_demo(db, packet_count=packet_count)
 
 @router.post("/demo/reset")
-def reset_demo_environment(db: Session = Depends(get_db)):
+def reset_demo_environment(db: Session = Depends(get_db), user: User = Depends(require_role(["ADMIN"]))):
     seed_database(db, reset=True)
     AuditEngine.record_event(
         db,
-        actor="SYSTEM",
+        actor=user.username,
         action="DEMO_ENVIRONMENT_RESET",
         target="TOPOLOGY",
         details={"status": "HEALTHY"}

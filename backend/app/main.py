@@ -21,10 +21,13 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS middleware for local frontend development
+# CORS: explicit origin allow-list (never combine wildcard "*" with
+# allow_credentials=True — that reflects any origin back with credentials
+# enabled, which defeats the purpose of an allow-list).
+allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
