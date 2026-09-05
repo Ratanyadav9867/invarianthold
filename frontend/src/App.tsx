@@ -11,6 +11,11 @@ import { AuditLedger } from './components/AuditLedger';
 import { ApiStudio } from './components/ApiStudio';
 import { SystemHealth } from './components/SystemHealth';
 import { JudgeShowcaseTour } from './components/JudgeShowcaseTour';
+import { PredictiveEngine } from './components/PredictiveEngine';
+import { DigitalTwin } from './components/DigitalTwin';
+import { SafeRecovery } from './components/SafeRecovery';
+import { BlastRadius } from './components/BlastRadius';
+import { ChaosSecurity } from './components/ChaosSecurity';
 import { api } from './api/client';
 import {
   ComponentData,
@@ -309,6 +314,16 @@ function AppContent() {
             loading={loading}
           />
         )}
+
+        {activeTab === 'predictions' && <PredictiveEngine />}
+
+        {activeTab === 'twin' && <DigitalTwin components={components} />}
+
+        {activeTab === 'recovery' && <SafeRecovery />}
+
+        {activeTab === 'blast' && <BlastRadius components={components} />}
+
+        {activeTab === 'chaos-security' && <ChaosSecurity components={components} />}
 
         {activeTab === 'chaos' && (
           <ChaosLab

@@ -20,7 +20,7 @@ class AuditEngine:
         actor: str,
         action: str,
         target: str,
-        details: dict[str, Any]
+        details: dict[str, Any] | None = None
     ) -> AuditLog:
         """
         Append a new cryptographic audit record linked to the previous record's hash.

@@ -199,3 +199,176 @@ export interface GraphTopology {
     total_components: number;
   };
 }
+
+// 1. Predictive Invariant Failure Types
+export interface PredictedRiskItem {
+  component_id: string;
+  component_name: string;
+  predicted_risk_score: number;
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  confidence: number;
+  contributing_factors: Record<string, number | string>;
+  recommended_preventive_action: string;
+  horizon_minutes: number;
+}
+
+export interface PredictionReport {
+  timestamp: string;
+  predictions: PredictedRiskItem[];
+  high_risk_count: number;
+  total_assessed: number;
+  model_type: string;
+}
+
+// 2. Digital Twin & What-If Simulation Types
+export interface SimulationScenarioRequest {
+  scenario_type: 'COMPONENT_FAIL' | 'ZONE_ISOLATION' | 'TRAFFIC_SPIKE' | 'LATENCY_DEGRADATION' | 'CONTROL_BYPASS';
+  target_nodes: string[];
+  parameters?: Record<string, any>;
+}
+
+export interface SimulationResult {
+  simulation_id: string;
+  scenario: string;
+  timestamp: string;
+  twin_summary: {
+    total_nodes: number;
+    total_edges: number;
+    healthy_nodes: number;
+    failed_nodes: number;
+  };
+  affected_paths: Array<{
+    path_id: string;
+    path_name: string;
+    status: string;
+    impact: string;
+  }>;
+  preserved_paths: string[];
+  invariants_at_risk: Array<{
+    invariant_id: string;
+    name: string;
+    severity: string;
+    reason: string;
+  }>;
+  blast_radius_estimate: number;
+  live_state_modified: boolean;
+  recommendations: string[];
+}
+
+// 3. Autonomous Safe Recovery Types
+export type RecoveryMode = 'MONITOR' | 'RECOMMEND' | 'AUTO';
+
+export interface RecoveryAction {
+  action_type: string;
+  path_id: string;
+  path_name: string;
+  from_hops: string[];
+  to_hops: string[];
+  reason: string;
+  invariant_guaranteed: boolean;
+}
+
+export interface RecoveryPlan {
+  mode: RecoveryMode;
+  candidates_analyzed: number;
+  actions: RecoveryAction[];
+  safe_traffic_preserved_pct: number;
+  unsafe_traffic_delivered: number;
+  execution_ready: boolean;
+}
+
+export interface RecoveryExecuteResponse {
+  executed: boolean;
+  mode: RecoveryMode;
+  actions_taken: RecoveryAction[];
+  paths_recovered: number;
+  unsafe_traffic_delivered: number;
+  status: string;
+  timestamp: string;
+}
+
+// 4. Blast Radius & Attack Path Analysis Types
+export interface BlastRadiusResult {
+  target_components: string[];
+  direct_dependents: string[];
+  transitive_dependents: string[];
+  total_affected: number;
+  critical_services_impacted: string[];
+  blast_percentage: number;
+  risk_score: number;
+  paths_interrupted: number;
+  paths_resilient: number;
+}
+
+export interface AttackStep {
+  from_node: string;
+  to_node: string;
+  vulnerability_or_risk: string;
+  controls_bypassed?: string[];
+}
+
+export interface AttackPathItem {
+  target_zone: string;
+  target_node: string;
+  path: string[];
+  steps: AttackStep[];
+  overall_risk: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  criticality: number;
+}
+
+export interface AttackPathResult {
+  source_id: string;
+  target_zones: string[];
+  attack_paths: AttackPathItem[];
+  total_paths_found: number;
+  highest_risk_path?: AttackPathItem;
+  recommended_chokepoints: string[];
+}
+
+// 5. Chaos Security Testing Types
+export interface ChaosRunRequest {
+  chaos_type: string;
+  components: string[];
+  label?: string;
+  intensity?: number;
+}
+
+export interface ChaosTestResult {
+  test_id: string;
+  scenario: string;
+  intensity: number;
+  target_components: string[];
+  paths_evaluated: number;
+  invariants_tested: number;
+  unsafe_traffic_delivered: number;
+  safety_maintained: boolean;
+  detailed_verdict: string;
+  live_state_modified: boolean;
+  timestamp: string;
+}
+
+export interface ChaosBatchResult {
+  batch_id: string;
+  total_tests: number;
+  passed: number;
+  failed: number;
+  results: ChaosTestResult[];
+  aggregate_safety_score: number;
+}
+
+export interface ChaosSecurityReport {
+  summary: {
+    total_runs: number;
+    pass_rate_pct: number;
+    zero_unsafe_traffic_verified: boolean;
+  };
+  test_history: ChaosTestResult[];
+  invariant_resilience_matrix: Array<{
+    invariant_id: string;
+    name: string;
+    times_tested: number;
+    held_firm_pct: number;
+  }>;
+  recommendations: string[];
+  generated_at: string;
+}

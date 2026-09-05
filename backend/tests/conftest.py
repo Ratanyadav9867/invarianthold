@@ -4,6 +4,7 @@ from app.core.topology_seed import seed_database
 from app.database import Base
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 # Enable CSRF bypass for the test suite (TestClient cannot share cookies across threads)

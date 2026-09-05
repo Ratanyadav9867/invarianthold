@@ -1,12 +1,16 @@
 from contextlib import asynccontextmanager
+import logging
 import os
+import secrets
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.api.routes import router as api_router
 from app.config import settings
@@ -90,8 +94,9 @@ async def csrf_protection(request: Request, call_next):
             )
         return response
 
-    # Allow login endpoint without CSRF check (no existing session)
-    if request.url.path in ("/api/auth/login",):
+    # Allow login endpoint and Authorization bearer token requests
+    # (custom Authorization header triggers browser CORS preflight and cannot be forged cross-origin)
+    if request.url.path in ("/api/auth/login",) or request.headers.get("Authorization"):
         return await call_next(request)
 
     # Enforce CSRF for all other state-changing requests

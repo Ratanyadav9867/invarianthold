@@ -1,6 +1,13 @@
 from app.api.deps import require_auth, require_role
 from app.config import settings
-from app.core.security import create_access_token, verify_password, get_password_hash
+from app.core.security import (
+    create_access_token,
+    verify_password,
+    get_password_hash,
+    is_login_locked,
+    record_failed_login,
+    clear_failed_logins,
+)
 from app.core.topology_seed import seed_database
 from app.database import get_db
 from app.models.audit import AuditLog
@@ -15,6 +22,15 @@ from app.schemas.common import (
     RerouteRequest,
     TokenResponse,
     TrafficSimulateRequest,
+    # New feature schemas
+    SimulationCreateRequest,
+    SimulationScenarioRequest,
+    SimulationRunRequest,
+    RecoveryModeRequest,
+    RecoveryExecuteRequest,
+    BlastRadiusRequest,
+    ChaosRunRequest,
+    ChaosBatchRequest,
 )
 from app.services.audit_engine import AuditEngine
 from app.services.demo_engine import DemoEngine
@@ -26,8 +42,25 @@ from app.services.ml_engine import ml_engine
 from app.services.rerouting_engine import ReroutingEngine
 from app.services.risk_engine import RiskEngine
 from app.services.traffic_engine import TrafficEngine
+# New feature engines
+from app.services.prediction_engine import PredictionEngine
+from app.services.simulation_engine import SimulationEngine
+from app.services.recovery_engine import RecoveryEngine, get_recovery_mode, set_recovery_mode
+from app.services.blast_radius_engine import BlastRadiusEngine
+from app.services.chaos_engine import ChaosEngine, CHAOS_SCENARIO_TYPES
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+
+import re
+from typing import Any
+from pydantic import BaseModel, Field
+
+SAFE_ID_REGEX = re.compile(r"^[A-Za-z0-9_\-\.]+$")
+
+class SimulationWhatIfRequest(BaseModel):
+    scenario_type: str = Field(default="COMPONENT_FAIL")
+    target_nodes: list[str] = Field(default_factory=list)
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
 router = APIRouter()
 
@@ -329,7 +362,10 @@ def get_audit_logs(
 
 @router.get("/audit/verify")
 @router.post("/audit/verify")
-def verify_audit_ledger(db: Session = Depends(get_db)):
+def verify_audit_ledger(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth)
+):
     return AuditEngine.verify_integrity(db)
 
 # ----------------------------------------------------
@@ -368,3 +404,294 @@ def get_graph_topology(db: Session = Depends(get_db), user: User = Depends(requi
     """Get active graph topology structure with zones, nodes, and reachability."""
     graph_engine = GraphEngine(db)
     return graph_engine.get_topology_snapshot()
+
+
+# ----------------------------------------------------
+# 11. PREDICTIVE INVARIANT FAILURE (STRICTLY ADVISORY)
+# ----------------------------------------------------
+@router.get("/predictions")
+def list_predictions(db: Session = Depends(get_db), user: User = Depends(require_auth)):
+    """
+    Generate advisory failure predictions for all components.
+    STRICTLY ADVISORY: Cannot override deterministic InvariantEngine.
+    """
+    return PredictionEngine.predict_all(db)
+
+@router.get("/predictions/{component_id}")
+def get_prediction(component_id: str, db: Session = Depends(get_db), user: User = Depends(require_auth)):
+    """Get advisory failure prediction for a single component."""
+    if not SAFE_ID_REGEX.match(component_id):
+        raise HTTPException(status_code=400, detail="Invalid component ID format.")
+    from app.models.component import Component
+    comp = db.query(Component).filter(Component.id == component_id).first()
+    if not comp:
+        raise HTTPException(status_code=404, detail=f"Component '{component_id}' not found.")
+    return PredictionEngine.predict_component(db, comp)
+
+
+# ----------------------------------------------------
+# 12. DIGITAL TWIN + WHAT-IF SIMULATION
+# ----------------------------------------------------
+@router.post("/simulation/what-if")
+def run_what_if_simulation(
+    req: SimulationWhatIfRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth)
+):
+    """
+    Run an in-memory What-If simulation against the Digital Twin.
+    Zero modifications to the live production database.
+    """
+    twin = SimulationEngine.create_twin(db, label=f"What-If: {req.scenario_type}")
+    sim_id = twin["simulation_id"]
+    scenario = {
+        "type": req.scenario_type,
+        "targets": req.target_nodes,
+        "parameters": req.parameters,
+    }
+    SimulationEngine.apply_scenario(sim_id, scenario)
+    verification = SimulationEngine.run_verification(sim_id)
+
+    blast_est = int((len(req.target_nodes) / max(len(twin.get("components", [])), 1)) * 100)
+    return {
+        "simulation_id": sim_id,
+        "scenario": req.scenario_type,
+        "timestamp": twin.get("created_at"),
+        "twin_summary": {
+            "total_nodes": len(twin.get("components", [])),
+            "total_edges": len(twin.get("paths", [])),
+            "healthy_nodes": len(twin.get("components", [])) - len(req.target_nodes),
+            "failed_nodes": len(req.target_nodes),
+        },
+        "affected_paths": [
+            {"path_id": p.get("id"), "path_name": p.get("name"), "status": p.get("status"), "impact": "Path degraded under simulated scenario."}
+            for p in verification.get("affected_paths", [])
+        ],
+        "preserved_paths": [p.get("id") for p in verification.get("preserved_paths", [])],
+        "invariants_at_risk": verification.get("invariants_at_risk", []),
+        "blast_radius_estimate": blast_est,
+        "live_state_modified": False,
+        "recommendations": [
+            "Maintain pre-provisioned redundant routes before taking target nodes offline.",
+            "Verify mTLS controls on alternate hops.",
+            "Ensure fail-closed invariant holds firm across boundary transitions."
+        ]
+    }
+@router.post("/simulation/create")
+def create_simulation(
+    req: SimulationCreateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))
+):
+    """
+    Clone the current live topology into an isolated Digital Twin.
+    The live system is NEVER modified.
+    """
+    result = SimulationEngine.create_twin(db, label=req.label)
+    AuditEngine.record_event(db, actor=user.username, action="SIMULATION_CREATED",
+        target=result["simulation_id"], details={"label": req.label})
+    return result
+
+@router.post("/simulation/scenario")
+def apply_simulation_scenario(
+    req: SimulationScenarioRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))
+):
+    """Apply a failure scenario to an existing simulation (Digital Twin only)."""
+    scenario = {
+        "type": req.scenario_type,
+        "targets": req.targets,
+        "latency_factor": req.latency_factor,
+        "packet_loss_pct": req.packet_loss_pct,
+        "invariant_id": req.invariant_id,
+    }
+    result = SimulationEngine.apply_scenario(req.simulation_id, scenario)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+@router.post("/simulation/run")
+def run_simulation(
+    req: SimulationRunRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))
+):
+    """Run invariant verification inside the Digital Twin simulation."""
+    result = SimulationEngine.run_verification(req.simulation_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    AuditEngine.record_event(db, actor=user.username, action="SIMULATION_RUN",
+        target=req.simulation_id, details={"status": result.get("status")})
+    return result
+
+@router.get("/simulation")
+def list_simulations(user: User = Depends(require_auth)):
+    """List all active Digital Twin simulations."""
+    return SimulationEngine.list_simulations()
+
+@router.get("/simulation/{sim_id}")
+def get_simulation(
+    sim_id: str,
+    user: User = Depends(require_auth)
+):
+    """Get a Digital Twin simulation result by ID."""
+    result = SimulationEngine.get_simulation(sim_id)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Simulation '{sim_id}' not found or expired.")
+    return result
+
+
+# ----------------------------------------------------
+# 13. AUTONOMOUS SAFE RECOVERY
+# ----------------------------------------------------
+@router.get("/recovery/status")
+def get_recovery_status(db: Session = Depends(get_db), user: User = Depends(require_auth)):
+    """
+    Assess current recovery posture: affected paths, candidate routes,
+    and current recovery mode.
+    """
+    return RecoveryEngine.assess(db)
+
+@router.get("/recovery/plan")
+def get_recovery_plan(db: Session = Depends(get_db), user: User = Depends(require_auth)):
+    """Assess and return active candidate recovery plan with safety guarantees."""
+    return RecoveryEngine.assess(db)
+
+@router.get("/recovery/mode")
+def get_mode(user: User = Depends(require_auth)):
+    """Get current autonomous recovery mode."""
+    return {"mode": get_recovery_mode()}
+
+@router.post("/recovery/mode")
+def set_mode(
+    req: RecoveryModeRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))
+):
+    """Set recovery mode: MONITOR | RECOMMEND | AUTO"""
+    new_mode = set_recovery_mode(req.mode)
+    AuditEngine.record_event(db, actor=user.username, action="RECOVERY_MODE_CHANGED",
+        target="RECOVERY_ENGINE", details={"mode": new_mode})
+    return {"mode": new_mode, "message": f"Recovery mode set to {new_mode}."}
+
+@router.post("/recovery/execute")
+def execute_recovery(
+    req: RecoveryExecuteRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))
+):
+    """
+    Execute safe recovery action based on current mode.
+    MONITOR → assess only. RECOMMEND → suggest routes. AUTO → reroute to GUARANTEED paths.
+    unsafe_traffic_delivered MUST == 0 for any claimed recovery.
+    """
+    result = RecoveryEngine.execute_recovery(db, path_id=req.path_id, actor=user.username)
+    return result
+
+
+# ----------------------------------------------------
+# 14. BLAST RADIUS + ATTACK PATH ANALYSIS
+# ----------------------------------------------------
+@router.post("/blast-radius")
+def calculate_blast_radius(
+    req: BlastRadiusRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth)
+):
+    """
+    Calculate blast radius if specified components were to fail.
+    Analysis only — does NOT modify any component state.
+    """
+    return BlastRadiusEngine.calculate(db, component_ids=req.component_ids)
+
+@router.get("/attack-paths/{component_id}")
+def get_attack_paths(
+    component_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth)
+):
+    """
+    Enumerate potential attack paths starting from the given component.
+    Uses live topology graph only — no fictional paths.
+    """
+    if not SAFE_ID_REGEX.match(component_id):
+        raise HTTPException(status_code=400, detail="Invalid component ID format.")
+    return BlastRadiusEngine.analyze_attack_paths(db, entry_component_id=component_id)
+
+
+# ----------------------------------------------------
+# 15. CHAOS SECURITY TESTING
+# ----------------------------------------------------
+@router.get("/chaos/types")
+def list_chaos_types(user: User = Depends(require_auth)):
+    """List all available chaos scenario types."""
+    return {"types": CHAOS_SCENARIO_TYPES}
+
+@router.post("/chaos/run")
+def run_chaos_scenario(
+    req: ChaosRunRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))
+):
+    """
+    Run a chaos security test against the Digital Twin.
+    NEVER modifies live production state.
+    """
+    result = ChaosEngine.run_scenario(
+        db,
+        chaos_type=req.chaos_type,
+        components=req.components or None,
+        label=req.label or f"Chaos: {req.chaos_type}",
+        intensity=req.intensity,
+    )
+    AuditEngine.record_event(db, actor=user.username, action="CHAOS_TEST_RUN",
+        target=result["chaos_id"],
+        details={"type": req.chaos_type, "result": result["result"]})
+    return result
+
+@router.post("/chaos/batch")
+def run_chaos_batch(
+    req: ChaosBatchRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "SECURITY_ANALYST"]))
+):
+    """
+    Run a batch of chaos tests (SINGLE/MULTI/RANDOM/PROGRESSIVE).
+    All tests run against the Digital Twin.
+    """
+    result = ChaosEngine.run_batch(
+        db,
+        test_type=req.test_type,
+        components=req.components or None,
+    )
+    AuditEngine.record_event(db, actor=user.username, action="CHAOS_BATCH_RUN",
+        target=result["batch_id"],
+        details={"test_type": req.test_type, "total": result["total_scenarios"]})
+    return result
+
+@router.get("/chaos")
+def list_chaos_results(user: User = Depends(require_auth)):
+    """List all chaos test results."""
+    return ChaosEngine.list_results()
+
+@router.get("/chaos/report")
+def get_global_chaos_report(user: User = Depends(require_auth)):
+    """Get the aggregate Chaos Security Resilience report across all tests."""
+    return ChaosEngine.generate_report()
+
+@router.get("/chaos/{chaos_id}")
+def get_chaos_result(chaos_id: str, user: User = Depends(require_auth)):
+    """Get a specific chaos test result."""
+    result = ChaosEngine.get_result(chaos_id)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Chaos result '{chaos_id}' not found.")
+    return result
+
+@router.get("/chaos/{chaos_id}/report")
+def get_chaos_report(chaos_id: str, user: User = Depends(require_auth)):
+    """Get the Chaos Security Report for a specific test run."""
+    report = ChaosEngine.get_report(chaos_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"Chaos result '{chaos_id}' not found.")
+    return report
