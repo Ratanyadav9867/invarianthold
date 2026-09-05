@@ -33,20 +33,20 @@ class InvariantEngine:
                 SecurityInvariant.enabled == True
             ).first()
 
-        # If no enabled invariant applies, path is considered GUARANTEED
+        # If no enabled invariant applies, path verdict MUST NOT be GUARANTEED (NO POLICY != GUARANTEED)
         if not invariant:
             return {
                 "path_id": path.id,
-                "verdict": "GUARANTEED",
+                "verdict": "NO_POLICY",
                 "invariant_id": None,
-                "invariant_name": "No Invariant Applied",
+                "invariant_name": "No Invariant Configured",
                 "required_controls": [],
                 "present_controls": [],
                 "missing_controls": [],
                 "failed_components": [],
                 "healthy_components": [],
                 "hops": eval_hops,
-                "reason": "No security invariant assigned to this path."
+                "reason": "No security invariant assigned to this path. Unverified path (NO_POLICY)."
             }
 
         required_controls = list(invariant.required_controls or [])
@@ -126,6 +126,7 @@ class InvariantEngine:
         guaranteed_count = 0
         violated_count = 0
         blocked_count = 0
+        no_policy_count = 0
 
         for path in paths:
             # If path was explicitly BLOCKED by fail-safe, we still evaluate if it's currently viable
@@ -146,6 +147,8 @@ class InvariantEngine:
                 blocked_count += 1
             elif res["verdict"] == "VIOLATED":
                 violated_count += 1
+            elif res["verdict"] == "NO_POLICY":
+                no_policy_count += 1
 
         db.commit()
 
@@ -157,6 +160,7 @@ class InvariantEngine:
             "guaranteed": guaranteed_count,
             "violated": violated_count,
             "blocked": blocked_count,
+            "no_policy": no_policy_count,
             "safe_path_preservation_pct": safe_preservation_pct,
             "results": results
         }

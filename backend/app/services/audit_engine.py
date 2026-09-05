@@ -9,8 +9,8 @@ GENESIS_HASH = "0" * 64
 
 class AuditEngine:
     """
-    Tamper-Evident Audit Ledger Engine.
-    Employs SHA-256 cryptographic hash-chaining to ensure an immutable,
+    Tamper-Evident SHA-256 Hash-Chained Audit Ledger Engine.
+    Employs SHA-256 cryptographic hash-chaining to ensure a tamper-evident,
     verifiable audit trail of all security decisions and administrative actions.
     """
 
@@ -21,11 +21,13 @@ class AuditEngine:
         actor: str,
         action: str,
         target: str,
-        details: Dict[str, Any]
+        details: Optional[Dict[str, Any]] = None
     ) -> AuditLog:
         """
         Append a new cryptographic audit record linked to the previous record's hash.
         """
+        if details is None:
+            details = {}
         last_log = db.query(AuditLog).order_by(AuditLog.id.desc()).first()
         prev_hash = last_log.current_hash if last_log else GENESIS_HASH
 
@@ -59,7 +61,7 @@ class AuditEngine:
     @classmethod
     def verify_integrity(cls, db: Session) -> Dict[str, Any]:
         """
-        Audit the entire blockchain-style ledger from genesis to tip.
+        Audit the entire tamper-evident SHA-256 hash-chained ledger from genesis to head.
         Detects any tampering, deletion, or modification of historical records.
         """
         logs = db.query(AuditLog).order_by(AuditLog.id.asc()).all()
@@ -80,6 +82,7 @@ class AuditEngine:
             if log.previous_hash != expected_prev_hash:
                 return {
                     "valid": False,
+                    "status": "COMPROMISED",
                     "total_records": total_records,
                     "tampered_record_id": log.id,
                     "error_type": "CHAIN_LINK_BROKEN",
@@ -102,6 +105,7 @@ class AuditEngine:
             if recomputed != log.current_hash:
                 return {
                     "valid": False,
+                    "status": "COMPROMISED",
                     "total_records": total_records,
                     "tampered_record_id": log.id,
                     "error_type": "PAYLOAD_ALTERED",

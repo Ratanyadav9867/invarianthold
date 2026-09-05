@@ -209,6 +209,66 @@
       const [soundMuted, setSoundMuted] = useState(false);
       const [healthStatus, setHealthStatus] = useState({ status: 'HEALTHY', latencyMs: 2 });
       
+      // RBAC & Auth State
+      const [currentRole, setCurrentRole] = useState('ADMIN');
+      const [authToken, setAuthToken] = useState(null);
+      const [rbacAlert, setRbacAlert] = useState(null);
+
+      const ROLE_CREDS = {
+        ADMIN: { username: 'admin', password: 'ratan9867@yadav' },
+        SECURITY_ANALYST: { username: 'analyst', password: 'ratan9867@yadav' },
+        VIEWER: { username: 'viewer', password: 'ratan9867@yadav' }
+      };
+
+      const loginAsRole = async (role) => {
+        try {
+          const creds = ROLE_CREDS[role] || ROLE_CREDS.ADMIN;
+          const res = await fetch(`${API_BASE}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(creds)
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setAuthToken(data.access_token);
+            setCurrentRole(role);
+            setRbacAlert(null);
+            setLastActionMsg(`Authenticated as ${role} (${creds.username}). Server-side RBAC session active.`);
+            return data.access_token;
+          }
+        } catch (e) {
+          console.error("Login failed:", e);
+        }
+        return null;
+      };
+
+      const authFetch = async (url, options = {}) => {
+        let token = authToken;
+        if (!token) {
+          token = await loginAsRole(currentRole);
+        }
+        const headers = {
+          ...(options.headers || {}),
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        };
+        const res = await fetch(url, { ...options, headers });
+        if (res.status === 403) {
+          const errData = await res.json().catch(() => ({}));
+          const msg = errData.detail || `Action Forbidden (403): Role '${currentRole}' is not authorized. Server-side RBAC enforced.`;
+          setRbacAlert(msg);
+          audioSynth.playAlert();
+          throw new Error(msg);
+        }
+        if (res.status === 401) {
+          const newToken = await loginAsRole(currentRole);
+          if (newToken) {
+            headers['Authorization'] = `Bearer ${newToken}`;
+            return fetch(url, { ...options, headers });
+          }
+        }
+        return res;
+      };
+
       // Built-in API Studio State (Replaces separate /docs)
       const [apiEndpoint, setApiEndpoint] = useState('/traffic/simulate');
       const [apiMethod, setApiMethod] = useState('POST');
@@ -222,12 +282,12 @@
         try {
           const t0 = performance.now();
           const [compRes, invRes, pathRes, statsRes, aiRes, auditRes, healthRes] = await Promise.all([
-            fetch(`${API_BASE}/components`).then(r => r.json()),
-            fetch(`${API_BASE}/invariants`).then(r => r.json()),
-            fetch(`${API_BASE}/paths`).then(r => r.json()),
-            fetch(`${API_BASE}/traffic/stats`).then(r => r.json()),
-            fetch(`${API_BASE}/ai/anomalies`).then(r => r.json()),
-            fetch(`${API_BASE}/audit?limit=25`).then(r => r.json()),
+            authFetch(`${API_BASE}/components`).then(r => r.json()),
+            authFetch(`${API_BASE}/invariants`).then(r => r.json()),
+            authFetch(`${API_BASE}/paths`).then(r => r.json()),
+            authFetch(`${API_BASE}/traffic/stats`).then(r => r.json()),
+            authFetch(`${API_BASE}/ai/anomalies`).then(r => r.json()),
+            authFetch(`${API_BASE}/audit?limit=25`).then(r => r.json()),
             fetch(`/health`).then(r => r.json()).catch(() => ({ status: 'ONLINE' }))
           ]);
           const t1 = performance.now();
@@ -246,7 +306,7 @@
 
       const fetchPackets = async () => {
         try {
-          const res = await fetch(`${API_BASE}/traffic?limit=30`);
+          const res = await authFetch(`${API_BASE}/traffic?limit=30`);
           const data = await res.json();
           setPackets(data || []);
         } catch (e) {}
@@ -272,7 +332,7 @@
         setLoading(true);
         audioSynth.playAlert();
         try {
-          const res = await fetch(`${API_BASE}/failures/inject`, {
+          const res = await authFetch(`${API_BASE}/failures/inject`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ component_ids: compIds, failure_type: type })
@@ -292,7 +352,7 @@
         setLoading(true);
         audioSynth.playSuccess();
         try {
-          const res = await fetch(`${API_BASE}/components/${id}/recover`, { method: 'POST' });
+          const res = await authFetch(`${API_BASE}/components/${id}/recover`, { method: 'POST' });
           const data = await res.json();
           setLastActionMsg(data.summary_message || `Component ${id} restored to HEALTHY.`);
           await refreshData();
@@ -308,7 +368,7 @@
         setLoading(true);
         audioSynth.playSuccess();
         try {
-          const res = await fetch(`${API_BASE}/demo/reset`, { method: 'POST' });
+          const res = await authFetch(`${API_BASE}/demo/reset`, { method: 'POST' });
           const data = await res.json();
           setLastActionMsg("Baseline fully restored: All nodes HEALTHY, all 10 paths GUARANTEED.");
           await refreshData();
@@ -324,7 +384,7 @@
         setLoading(true);
         audioSynth.playSuccess();
         try {
-          const res = await fetch(`${API_BASE}/reroute`, {
+          const res = await authFetch(`${API_BASE}/reroute`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ path_id: pathId })
@@ -344,13 +404,15 @@
         setLoading(true);
         if (playChime) audioSynth.playBeep(440, 0.05);
         try {
-          const res = await fetch(`${API_BASE}/traffic/simulate`, {
+          const res = await authFetch(`${API_BASE}/traffic/simulate`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ packet_count: count })
           });
           const data = await res.json();
-          setLastActionMsg(`Simulated ${count} packets. Delivered: ${data.total_delivered} | Blocked: ${data.total_blocked} | Unsafe: ${data.unsafe_traffic_delivered}`);
+          const delivered = data.packets_delivered !== undefined ? data.packets_delivered : (data.total_delivered || 0);
+          const blocked = data.packets_blocked !== undefined ? data.packets_blocked : (data.total_blocked || 0);
+          setLastActionMsg(`Simulated ${count} packets. Delivered: ${delivered} | Blocked: ${blocked} | Unsafe: ${data.unsafe_traffic_delivered}`);
           await refreshData();
           await fetchPackets();
         } catch (e) {
@@ -363,10 +425,10 @@
       const handleVerifyAudit = async () => {
         audioSynth.playSuccess();
         try {
-          const res = await fetch(`${API_BASE}/audit/verify`, { method: 'POST' });
+          const res = await authFetch(`${API_BASE}/audit/verify`, { method: 'POST' });
           const data = await res.json();
           setAuditStatus(data);
-          setLastActionMsg(data.verified ? "Audit Chain Intact: SHA-256 Hashes 100% Cryptographically Verified" : "Audit Integrity Warning Detected!");
+          setLastActionMsg(data.valid ? "Audit Chain Intact: SHA-256 Hashes 100% Cryptographically Verified" : "Audit Integrity Compromised!");
         } catch (e) {
           console.error(e);
         }
@@ -377,7 +439,7 @@
         setDemoResult(null);
         audioSynth.playSuccess();
         try {
-          const res = await fetch(`${API_BASE}/demo/run?packet_count=1000`, { method: 'POST' });
+          const res = await authFetch(`${API_BASE}/demo/run?packet_count=1000`, { method: 'POST' });
           const data = await res.json();
           setDemoResult(data);
           setActiveTab('judge-tour');
@@ -402,7 +464,7 @@
           if (apiMethod !== 'GET' && apiPayload) {
             opts.body = apiPayload;
           }
-          const res = await fetch(API_BASE + apiEndpoint, opts);
+          const res = await authFetch(API_BASE + apiEndpoint, opts);
           const t1 = performance.now();
           const data = await res.json();
           setApiLatency(Math.round(t1 - t0));
@@ -415,6 +477,7 @@
           setApiRunning(false);
         }
       };
+
 
       // System calculations
       const totalPaths = paths.length || 10;
@@ -485,6 +548,29 @@
               {/* Right Action Bar */}
               <div className="flex items-center space-x-3">
                 
+                {/* Server-Side RBAC Role Switcher */}
+                <div className="flex items-center space-x-1 px-2 py-1 rounded-lg bg-slate-900/90 border border-cyber-border text-xs font-mono">
+                  <span className="text-slate-400 text-[10px] hidden sm:inline mr-1">ROLE:</span>
+                  {[
+                    { id: 'ADMIN', label: 'ADMIN', color: 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(0,240,255,0.4)]' },
+                    { id: 'SECURITY_ANALYST', label: 'ANALYST', color: 'bg-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.4)]' },
+                    { id: 'VIEWER', label: 'VIEWER', color: 'bg-emerald-500 text-black shadow-[0_0_10px_rgba(0,255,157,0.4)]' }
+                  ].map(r => (
+                    <button
+                      key={r.id}
+                      onClick={() => loginAsRole(r.id)}
+                      title={`Switch active session role to ${r.id}`}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                        currentRole === r.id
+                          ? r.color
+                          : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Audio Sound Toggle */}
                 <button
                   onClick={() => {
@@ -560,6 +646,25 @@
               ))}
             </div>
           </header>
+
+          {/* RBAC Rejection Alert Banner */}
+          {rbacAlert && (
+            <div className="bg-rose-950/90 border-b border-rose-500/80 px-4 py-3 flex items-center justify-between z-40 backdrop-blur-md">
+              <div className="flex items-center space-x-3 text-rose-200 text-xs font-mono">
+                <i data-lucide="shield-alert" className="w-5 h-5 text-rose-400 flex-shrink-0"></i>
+                <div>
+                  <span className="font-bold text-rose-300">SERVER-SIDE RBAC REJECTION (403 FORBIDDEN):</span>
+                  <span className="ml-2 text-rose-100">{rbacAlert}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setRbacAlert(null)}
+                className="text-rose-400 hover:text-white text-xs font-mono px-3 py-1 rounded bg-rose-900/40 hover:bg-rose-900/80 border border-rose-500/40"
+              >
+                DISMISS
+              </button>
+            </div>
+          )}
 
           {/* ACTION NOTIFICATION TICKER */}
           {lastActionMsg && (

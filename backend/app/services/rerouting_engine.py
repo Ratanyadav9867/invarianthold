@@ -35,19 +35,22 @@ class ReroutingEngine:
             }
 
         # Evaluate candidate routes against the deterministic invariant engine
+        # STRICT REQUIREMENT: Only accept candidate if verdict == "GUARANTEED".
+        # Reject VIOLATED, BLOCKED, NO_POLICY, UNVERIFIED, AT_RISK.
         accepted_route: Optional[List[str]] = None
         rejection_reasons = []
 
         for candidate in candidates:
             eval_res = InvariantEngine.verify_path(db, path, graph_engine, hops=candidate)
-            if eval_res["verdict"] == "GUARANTEED":
+            verdict = eval_res.get("verdict")
+            if verdict == "GUARANTEED":
                 accepted_route = candidate
                 break
             else:
                 rejection_reasons.append({
                     "candidate_hops": candidate,
-                    "verdict": eval_res["verdict"],
-                    "reason": eval_res["reason"]
+                    "verdict": verdict,
+                    "reason": eval_res.get("reason", f"Candidate rejected with status {verdict}")
                 })
 
         now = datetime.datetime.now(datetime.timezone.utc)

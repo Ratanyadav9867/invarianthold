@@ -126,39 +126,50 @@ def test_auth_and_rbac():
     assert payload["role"] == "SECURITY_ANALYST"
 
 
-def test_api_endpoints_live():
-    """Test primary REST API endpoints."""
-    # Health endpoint
-    r = client.get("/health")
-    assert r.status_code == 200
-    assert r.json()["status"] == "HEALTHY"
+def test_api_endpoints_live(db_session: Session):
+    """Test primary REST API endpoints with authentication and RBAC."""
+    from app.database import get_db
+    def override_get_db():
+        yield db_session
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        # Health endpoint (public)
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "HEALTHY"
 
-    # List components
-    r = client.get("/api/components")
-    assert r.status_code == 200
-    assert len(r.json()) == 8
+        token = create_access_token({"sub": "admin", "role": "ADMIN"})
+        headers = {"Authorization": f"Bearer {token}"}
 
-    # List invariants
-    r = client.get("/api/invariants")
-    assert r.status_code == 200
-    assert len(r.json()) == 4
+        # List components
+        r = client.get("/api/components", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 8
 
-    # List paths
-    r = client.get("/api/paths")
-    assert r.status_code == 200
-    assert len(r.json()) == 10
+        # List invariants
+        r = client.get("/api/invariants", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 4
 
-    # Traffic simulation
-    r = client.post("/api/traffic/simulate", json={"packet_count": 500})
-    assert r.status_code == 200
-    data = r.json()
-    assert data["total_packets"] == 500
-    assert data["unsafe_traffic_delivered"] == 0
+        # List paths
+        r = client.get("/api/paths", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 10
 
-    # Full Judge Demo
-    r = client.post("/api/demo/run?packet_count=100")
-    assert r.status_code == 200
-    demo_data = r.json()
-    assert demo_data["demo_status"] == "SUCCESS"
-    assert demo_data["scorecard"]["unsafe_traffic_delivered"] == 0
-    assert len(demo_data["timeline"]) == 8
+        # Traffic simulation
+        r = client.post("/api/traffic/simulate", json={"packet_count": 500}, headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["total_packets"] == 500
+        assert data["unsafe_traffic_delivered"] == 0
+
+        # Full Judge Demo
+        r = client.post("/api/demo/run?packet_count=100", headers=headers)
+        assert r.status_code == 200
+        demo_data = r.json()
+        assert demo_data["demo_status"] == "SUCCESS"
+        assert demo_data["scorecard"]["unsafe_traffic_delivered"] == 0
+        assert len(demo_data["timeline"]) == 8
+    finally:
+        app.dependency_overrides.clear()
+
