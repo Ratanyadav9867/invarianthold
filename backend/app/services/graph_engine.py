@@ -1,16 +1,18 @@
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any
+
 import networkx as nx
-from sqlalchemy.orm import Session
-from app.models.component import Component, TopologyNode, TopologyEdge
+from app.models.component import Component, TopologyEdge, TopologyNode
 from app.models.invariant import TrafficPath
+from sqlalchemy.orm import Session
+
 
 class GraphEngine:
-    def __init__(self, db: Optional[Session] = None):
+    def __init__(self, db: Session | None = None):
         self.graph = nx.DiGraph()
-        self.node_metadata: Dict[str, Dict[str, Any]] = {}
-        self.edge_metadata: Dict[str, Dict[str, Any]] = {}
-        self.component_to_node: Dict[str, str] = {}
-        self.node_to_component: Dict[str, str] = {}
+        self.node_metadata: dict[str, dict[str, Any]] = {}
+        self.edge_metadata: dict[str, dict[str, Any]] = {}
+        self.component_to_node: dict[str, str] = {}
+        self.node_to_component: dict[str, str] = {}
         if db:
             self.load_from_db(db)
 
@@ -61,7 +63,7 @@ class GraphEngine:
             self.graph.add_edge(edge.source_node, edge.target_node, **edge_meta)
             self.edge_metadata[f"{edge.source_node}->{edge.target_node}"] = edge_meta
 
-    def get_path_components(self, db: Session, hops: List[str]) -> List[Component]:
+    def get_path_components(self, db: Session, hops: list[str]) -> list[Component]:
         """Return the list of Component objects present along the specified path hops."""
         component_ids = []
         for node_id in hops:
@@ -76,7 +78,7 @@ class GraphEngine:
         comps = {c.id: c for c in db.query(Component).filter(Component.id.in_(component_ids)).all()}
         return [comps[cid] for cid in component_ids if cid in comps]
 
-    def get_path_control_types(self, db: Session, hops: List[str]) -> List[str]:
+    def get_path_control_types(self, db: Session, hops: list[str]) -> list[str]:
         """Return distinct control types present along the path, ordered by traversal."""
         components = self.get_path_components(db, hops)
         seen = set()
@@ -87,12 +89,12 @@ class GraphEngine:
                 controls.append(c.type)
         return controls
 
-    def build_dependency_map(self, db: Session) -> Dict[str, List[str]]:
+    def build_dependency_map(self, db: Session) -> dict[str, list[str]]:
         """
         Map each component ID to all path IDs that transit through it.
         Example: {'ENC-01': ['PATH-PCI-TX-01', 'PATH-PCI-TX-02', 'PATH-PCI-RECURRING']}
         """
-        dependency_map: Dict[str, List[str]] = {}
+        dependency_map: dict[str, list[str]] = {}
         all_components = db.query(Component).all()
         for comp in all_components:
             dependency_map[comp.id] = []
@@ -102,13 +104,11 @@ class GraphEngine:
             hops = path.current_hops or []
             for node_id in hops:
                 comp_id = self.node_to_component.get(node_id)
-                if comp_id and comp_id in dependency_map:
-                    if path.id not in dependency_map[comp_id]:
-                        dependency_map[comp_id].append(path.id)
-
+                if comp_id and comp_id in dependency_map and path.id not in dependency_map[comp_id]:
+                    dependency_map[comp_id].append(path.id)
         return dependency_map
 
-    def find_all_simple_paths(self, source: str, destination: str, cutoff: int = 8) -> List[List[str]]:
+    def find_all_simple_paths(self, source: str, destination: str, cutoff: int = 8) -> list[list[str]]:
         """Find all acyclic simple paths between source and destination within cutoff hops."""
         if not self.graph.has_node(source) or not self.graph.has_node(destination):
             return []
@@ -117,7 +117,7 @@ class GraphEngine:
         except nx.NetworkXNoPath:
             return []
 
-    def find_candidate_alternate_paths(self, db: Session, path: TrafficPath, cutoff: int = 8) -> List[List[str]]:
+    def find_candidate_alternate_paths(self, db: Session, path: TrafficPath, cutoff: int = 8) -> list[list[str]]:
         """
         Discover candidate alternate paths for a given TrafficPath.
         Excludes the currently active hops and prioritizes paths using available components.
@@ -135,7 +135,7 @@ class GraphEngine:
 
         return candidates
 
-    def get_topology_snapshot(self) -> Dict[str, Any]:
+    def get_topology_snapshot(self) -> dict[str, Any]:
         """Export serialized graph data for React Flow visualization."""
         nodes_export = []
         for node_id, data in self.graph.nodes(data=True):

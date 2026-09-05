@@ -1,5 +1,7 @@
-from typing import List, Dict, Any, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
+
 
 # Auth schemas
 class LoginRequest(BaseModel):
@@ -9,11 +11,11 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    user: Dict[str, Any]
+    user: dict[str, Any]
 
 # Failure Injection schema
 class FailureInjectionRequest(BaseModel):
-    component_ids: List[str]
+    component_ids: list[str]
     failure_type: str = "MANUAL_INJECTION"
 
 # Traffic Simulation schema
@@ -22,9 +24,9 @@ class TrafficSimulateRequest(BaseModel):
 
 # Reroute schema
 class RerouteRequest(BaseModel):
-    path_id: Optional[str] = None  # If None, reroutes all affected paths
+    path_id: str | None = None  # If None, reroutes all affected paths
 
 # Explain schema
 class ExplainRequest(BaseModel):
-    path_id: Optional[str] = None
-    incident_id: Optional[str] = None
+    path_id: str | None = None
+    incident_id: str | None = None

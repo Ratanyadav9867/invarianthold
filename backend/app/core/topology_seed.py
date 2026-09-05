@@ -1,13 +1,13 @@
-import datetime
-from sqlalchemy.orm import Session
+from app.config import settings
+from app.core.security import get_password_hash
 from app.database import Base, engine
-from app.models.component import Component, TopologyNode, TopologyEdge
-from app.models.invariant import SecurityInvariant, TrafficPath
-from app.models.traffic import TrafficPacket, Incident, AnomalyRecord
 from app.models.audit import AuditLog
 from app.models.auth import User
-from app.core.security import get_password_hash
-from app.config import settings
+from app.models.component import Component, TopologyEdge, TopologyNode
+from app.models.invariant import SecurityInvariant, TrafficPath
+from app.models.traffic import AnomalyRecord, Incident, TrafficPacket
+from sqlalchemy.orm import Session
+
 
 def seed_database(db: Session, reset: bool = False):
     """Seed the database with the default Fintech topology, invariants, and initial users."""

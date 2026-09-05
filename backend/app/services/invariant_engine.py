@@ -1,9 +1,11 @@
-from typing import List, Dict, Any, Optional
 import datetime
-from sqlalchemy.orm import Session
+from typing import Any
+
 from app.models.component import Component
 from app.models.invariant import SecurityInvariant, TrafficPath
 from app.services.graph_engine import GraphEngine
+from sqlalchemy.orm import Session
+
 
 class InvariantEngine:
     """
@@ -17,8 +19,8 @@ class InvariantEngine:
         db: Session,
         path: TrafficPath,
         graph_engine: GraphEngine,
-        hops: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        hops: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Verify whether the given path hops satisfy the applicable security invariant.
         Uses actual node components and their live operational status.
@@ -26,18 +28,18 @@ class InvariantEngine:
         eval_hops = hops if hops is not None else (path.current_hops or [])
         
         # 1. Fetch applicable invariant
-        invariant: Optional[SecurityInvariant] = None
+        invariant: SecurityInvariant | None = None
         if path.applicable_invariant_id:
             invariant = db.query(SecurityInvariant).filter(
                 SecurityInvariant.id == path.applicable_invariant_id,
                 SecurityInvariant.enabled == True
             ).first()
 
-        # If no enabled invariant applies, path is considered GUARANTEED
+        # If no enabled invariant applies, path evaluates to NO_POLICY (NO_POLICY != GUARANTEED)
         if not invariant:
             return {
                 "path_id": path.id,
-                "verdict": "GUARANTEED",
+                "verdict": "NO_POLICY",
                 "invariant_id": None,
                 "invariant_name": "No Invariant Applied",
                 "required_controls": [],
@@ -46,7 +48,7 @@ class InvariantEngine:
                 "failed_components": [],
                 "healthy_components": [],
                 "hops": eval_hops,
-                "reason": "No security invariant assigned to this path."
+                "reason": "No security invariant assigned to this path (NO_POLICY != GUARANTEED). Path is not verified safe."
             }
 
         required_controls = list(invariant.required_controls or [])
@@ -55,9 +57,9 @@ class InvariantEngine:
         components_on_path = graph_engine.get_path_components(db, eval_hops)
         
         # Map control type -> list of operational components providing it
-        control_providers: Dict[str, List[Component]] = {}
-        failed_components: List[Component] = []
-        healthy_components: List[Component] = []
+        control_providers: dict[str, list[Component]] = {}
+        failed_components: list[Component] = []
+        healthy_components: list[Component] = []
 
         for comp in components_on_path:
             if comp.type not in control_providers:
@@ -119,13 +121,15 @@ class InvariantEngine:
         }
 
     @classmethod
-    def verify_all_paths(cls, db: Session, graph_engine: GraphEngine) -> Dict[str, Any]:
+    def verify_all_paths(cls, db: Session, graph_engine: GraphEngine) -> dict[str, Any]:
         """Verify all active paths in the database and update their statuses."""
         paths = db.query(TrafficPath).filter(TrafficPath.is_active == True).all()
         results = {}
         guaranteed_count = 0
         violated_count = 0
         blocked_count = 0
+        at_risk_count = 0
+        no_policy_count = 0
 
         for path in paths:
             # If path was explicitly BLOCKED by fail-safe, we still evaluate if it's currently viable
@@ -137,7 +141,7 @@ class InvariantEngine:
             # Update path in DB
             path.status = res["verdict"]
             path.decision_reason = res["reason"]
-            path.last_verified_at = datetime.datetime.now(datetime.timezone.utc)
+            path.last_verified_at = datetime.datetime.now(datetime.UTC)
             
             results[path.id] = res
             if res["verdict"] == "GUARANTEED":
@@ -146,6 +150,10 @@ class InvariantEngine:
                 blocked_count += 1
             elif res["verdict"] == "VIOLATED":
                 violated_count += 1
+            elif res["verdict"] == "AT_RISK":
+                at_risk_count += 1
+            elif res["verdict"] == "NO_POLICY":
+                no_policy_count += 1
 
         db.commit()
 
@@ -157,6 +165,8 @@ class InvariantEngine:
             "guaranteed": guaranteed_count,
             "violated": violated_count,
             "blocked": blocked_count,
+            "at_risk": at_risk_count,
+            "no_policy": no_policy_count,
             "safe_path_preservation_pct": safe_preservation_pct,
             "results": results
         }

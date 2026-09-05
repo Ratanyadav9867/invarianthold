@@ -1,6 +1,9 @@
 import datetime
-from sqlalchemy import Column, String, Boolean, DateTime
+
+from sqlalchemy import Boolean, Column, DateTime, String
+
 from app.database import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -11,7 +14,7 @@ class User(Base):
     password_hash = Column(String(256), nullable=False)
     role = Column(String(32), nullable=False, default="SECURITY_ANALYST")  # ADMIN, SECURITY_ANALYST, VIEWER
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
 
     def to_dict(self):
         return {

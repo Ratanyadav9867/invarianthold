@@ -1,11 +1,11 @@
-import pytest
-from sqlalchemy.orm import Session
 from app.models.component import Component
-from app.models.invariant import TrafficPath, SecurityInvariant
+from app.models.invariant import TrafficPath
+from app.services.failure_engine import FailureEngine
 from app.services.graph_engine import GraphEngine
 from app.services.invariant_engine import InvariantEngine
-from app.services.failure_engine import FailureEngine
 from app.services.rerouting_engine import ReroutingEngine
+from sqlalchemy.orm import Session
+
 
 def test_1_healthy_invariant_guaranteed(db_session: Session):
     """

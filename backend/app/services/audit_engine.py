@@ -1,9 +1,8 @@
 import datetime
-import json
-import hashlib
-from typing import Dict, Any, List, Optional
-from sqlalchemy.orm import Session
+from typing import Any
+
 from app.models.audit import AuditLog
+from sqlalchemy.orm import Session
 
 GENESIS_HASH = "0" * 64
 
@@ -21,7 +20,7 @@ class AuditEngine:
         actor: str,
         action: str,
         target: str,
-        details: Dict[str, Any]
+        details: dict[str, Any]
     ) -> AuditLog:
         """
         Append a new cryptographic audit record linked to the previous record's hash.
@@ -29,7 +28,7 @@ class AuditEngine:
         last_log = db.query(AuditLog).order_by(AuditLog.id.desc()).first()
         prev_hash = last_log.current_hash if last_log else GENESIS_HASH
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         current_hash = AuditLog.compute_hash(
@@ -57,7 +56,7 @@ class AuditEngine:
         return log_entry
 
     @classmethod
-    def verify_integrity(cls, db: Session) -> Dict[str, Any]:
+    def verify_integrity(cls, db: Session) -> dict[str, Any]:
         """
         Audit the entire blockchain-style ledger from genesis to tip.
         Detects any tampering, deletion, or modification of historical records.

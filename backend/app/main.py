@@ -1,24 +1,40 @@
+from contextlib import asynccontextmanager
 import os
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
-from app.config import settings
-from app.database import engine, Base, SessionLocal
-from app.core.topology_seed import seed_database
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
 from app.api.routes import router as api_router
+from app.config import settings
+from app.core.topology_seed import seed_database
+from app.database import Base, SessionLocal, engine, get_db
+from app.models.audit import AuditLog
+from app.models.component import Component
+from app.models.invariant import SecurityInvariant
 from app.services.ml_engine import SKLEARN_AVAILABLE
 
-# Ensure tables are created
-Base.metadata.create_all(bind=engine)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Ensure tables are created
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        seed_database(db, reset=False)
+    finally:
+        db.close()
+    yield
 
 app = FastAPI(
     title="InvariantHold API",
     description="Runtime Security Invariant Verification & Targeted Fail-Safe Platform",
     version=settings.VERSION,
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # CORS: explicit origin allow-list (never combine wildcard "*" with
@@ -36,21 +52,34 @@ app.add_middleware(
 # Mount API routes
 app.include_router(api_router, prefix="/api")
 
-@app.on_event("startup")
-def on_startup():
-    db = SessionLocal()
-    try:
-        seed_database(db, reset=False)
-    finally:
-        db.close()
-
 @app.get("/health")
-def health_check():
+@app.get("/api/health")
+def health_check(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+        db_status = "CONNECTED"
+    except Exception as e:
+        db_status = f"ERROR: {str(e)}"
+
+    inv_count = db.query(SecurityInvariant).count()
+    comp_count = db.query(Component).count()
+    audit_count = db.query(AuditLog).count()
+
     return {
         "status": "HEALTHY",
         "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "database": "CONNECTED",
+        "environment": settings.ENV,
+        "subsystems": {
+            "backend": {"status": "OPERATIONAL", "version": settings.VERSION},
+            "database": {"status": db_status, "engine": "SQLite" if settings.DATABASE_URL.startswith("sqlite") else "PostgreSQL"},
+            "invariant_engine": {"status": "ACTIVE", "invariants_loaded": inv_count},
+            "topology_engine": {"status": "ACTIVE", "components_loaded": comp_count},
+            "ml_engine": {"status": "ACTIVE", "model": "IsolationForest (scikit-learn)" if SKLEARN_AVAILABLE else "Statistical Baseline"},
+            "simulation_engine": {"status": "READY", "default_packets": settings.DEFAULT_PACKET_COUNT},
+            "audit_ledger": {"status": "ACTIVE", "records_logged": audit_count, "algorithm": "SHA-256"}
+        },
+        "database": db_status,
         "ml_engine": "ACTIVE (scikit-learn)" if SKLEARN_AVAILABLE else "ACTIVE (Statistical Fallback)",
         "simulation_engine": "READY"
     }

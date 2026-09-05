@@ -1,8 +1,20 @@
 import datetime
 import uuid
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, Text, JSON, ForeignKey
-from sqlalchemy.orm import relationship
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
+
 from app.database import Base
+
 
 class TrafficPacket(Base):
     __tablename__ = "traffic_packets"
@@ -17,7 +29,7 @@ class TrafficPacket(Base):
     is_safe = Column(Boolean, nullable=False, default=True)
     boundary_crossed = Column(String(64), nullable=True)  # e.g., PCI, DATABASE, DMZ
     latency_ms = Column(Float, nullable=False, default=2.0)
-    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.UTC))
 
     def to_dict(self):
         return {
@@ -48,7 +60,7 @@ class Incident(Base):
     anomaly_score = Column(Float, nullable=False, default=0.0)
     root_cause = Column(Text, nullable=True)
     remediation_summary = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.UTC))
 
     def to_dict(self):
         return {
@@ -74,7 +86,7 @@ class AnomalyRecord(Base):
     is_anomaly = Column(Boolean, nullable=False)
     risk_level = Column(String(32), nullable=False)
     features = Column(JSON, nullable=False, default=dict)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.UTC))
 
     def to_dict(self):
         return {

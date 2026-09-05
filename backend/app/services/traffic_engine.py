@@ -1,11 +1,11 @@
-import random
 import datetime
+import random
 import uuid
-from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
-from app.models.invariant import TrafficPath, SecurityInvariant
+from typing import Any
+
+from app.models.invariant import TrafficPath
 from app.models.traffic import TrafficPacket
-from app.services.graph_engine import GraphEngine
+from sqlalchemy.orm import Session
 
 PROTOCOLS = ["TCP", "HTTPS", "HTTP", "SSH", "DNS", "UDP"]
 
@@ -22,7 +22,7 @@ class TrafficEngine:
         db: Session,
         packet_count: int = 1000,
         persist_sample_size: int = 100
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate and route simulated packets across active paths.
         Calculates ground-truth packet delivery metrics and asserts safety invariant.
@@ -45,7 +45,7 @@ class TrafficEngine:
 
         random.seed(42)  # Deterministic seed for reproducible demonstrations
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
 
         for i in range(packet_count):
             path = paths[i % len(paths)]
@@ -69,16 +69,21 @@ class TrafficEngine:
                 is_safe = True  # Safely blocked: preventing unsafe ingress
                 latency = round(random.uniform(0.3, 0.8), 2)  # Fast fail-safe isolation
                 total_blocked += 1
+            elif path.status == "NO_POLICY":
+                status = "DROPPED"
+                is_safe = False  # NO_POLICY is unverified and cannot be delivered as safe
+                latency = 1.0
+                total_dropped += 1
             else:
                 status = "DROPPED"
-                is_safe = True
+                is_safe = False
                 latency = 5.0
                 total_dropped += 1
 
             total_latency += latency
 
-            # Central Safety Check: If an unsafe packet were somehow marked DELIVERED, flag it!
-            if path.status in ["BLOCKED", "VIOLATED"] and status in ["DELIVERED", "REROUTED"]:
+            # Central Safety Check: If an unsafe packet were somehow marked DELIVERED on non-guaranteed path, flag it!
+            if path.status in ["BLOCKED", "VIOLATED", "NO_POLICY"] and status in ["DELIVERED", "REROUTED"]:
                 unsafe_traffic_delivered += 1
 
             # Keep a sample of packets in database for inspection and API queries
@@ -127,7 +132,7 @@ class TrafficEngine:
         }
 
     @classmethod
-    def get_traffic_stats(cls, db: Session) -> Dict[str, Any]:
+    def get_traffic_stats(cls, db: Session) -> dict[str, Any]:
         """Return aggregate statistics of simulated packets currently in DB."""
         packets = db.query(TrafficPacket).all()
         total = len(packets)

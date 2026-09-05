@@ -1,10 +1,12 @@
-from typing import List, Dict, Any, Optional
 import datetime
-from sqlalchemy.orm import Session
+from typing import Any
+
 from app.models.component import Component
-from app.models.invariant import TrafficPath, SecurityInvariant
+from app.models.invariant import TrafficPath
 from app.services.graph_engine import GraphEngine
 from app.services.invariant_engine import InvariantEngine
+from sqlalchemy.orm import Session
+
 
 class FailureEngine:
     """
@@ -17,9 +19,9 @@ class FailureEngine:
     def inject_failure(
         cls,
         db: Session,
-        component_ids: List[str],
+        component_ids: list[str],
         failure_type: str = "MANUAL_INJECTION"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Inject failure into one or more enforcement components.
         Applies Targeted Fail-Safe exclusively to affected unsafe paths.
@@ -32,7 +34,7 @@ class FailureEngine:
         if not components:
             return {"error": f"Components {component_ids} not found."}
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         for comp in components:
             comp.status = "FAILED"
             comp.health_score = 0.0
@@ -130,7 +132,7 @@ class FailureEngine:
         }
 
     @classmethod
-    def recover_component(cls, db: Session, component_id: str) -> Dict[str, Any]:
+    def recover_component(cls, db: Session, component_id: str) -> dict[str, Any]:
         """
         Recover a single failed component to HEALTHY status.
         Re-verifies affected paths and restores them only if the invariant is GUARANTEED.
@@ -145,7 +147,7 @@ class FailureEngine:
 
         # Reload graph
         graph_engine = GraphEngine(db)
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
 
         # Re-verify all paths
         paths = db.query(TrafficPath).filter(TrafficPath.is_active == True).all()
@@ -178,7 +180,7 @@ class FailureEngine:
         }
 
     @classmethod
-    def recover_all(cls, db: Session) -> Dict[str, Any]:
+    def recover_all(cls, db: Session) -> dict[str, Any]:
         """Restore all components to HEALTHY status and re-verify all paths."""
         components = db.query(Component).all()
         for comp in components:

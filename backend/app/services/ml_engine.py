@@ -1,6 +1,6 @@
-import random
+from typing import Any
+
 import numpy as np
-from typing import Dict, Any, List, Optional
 
 try:
     from sklearn.ensemble import IsolationForest
@@ -29,7 +29,7 @@ class MLEngine:
     def __init__(self, random_state: int = 42):
         self.random_state = random_state
         self.model = None
-        self.baseline_stats: Dict[str, Dict[str, float]] = {}
+        self.baseline_stats: dict[str, dict[str, float]] = {}
         self._init_and_train()
 
     def _init_and_train(self):
@@ -83,8 +83,8 @@ class MLEngine:
 
     def analyze_telemetry(
         self,
-        features: Dict[str, float]
-    ) -> Dict[str, Any]:
+        features: dict[str, float]
+    ) -> dict[str, Any]:
         """
         Analyze live or simulated system telemetry vector.
         Returns anomaly_score (0.0 to 1.0), is_anomaly, risk_level, and contributing metrics.
@@ -146,7 +146,7 @@ class MLEngine:
     def evaluate_scenario(
         self,
         scenario_type: str = "NORMAL"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Evaluate synthetic test scenarios for demo and validation.
         Supported scenarios: 'NORMAL', 'SINGLE_FAILURE', 'BURST_ANOMALY', 'LATENCY_SPIKE'.

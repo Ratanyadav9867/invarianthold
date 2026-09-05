@@ -4,34 +4,37 @@ Runtime Security Invariant Verification & Targeted Fail-Safe Platform
 Self-contained single-file architecture combining database, engines, APIs, and Cyber SOC UI.
 """
 
-import os
-import sys
-import time
-import uuid
-import json
-import random
-import hashlib
 import datetime
-from typing import List, Dict, Any, Optional
+import hashlib
+import json
+import os
+import random
+import uuid
+from typing import Any
 
 import bcrypt
-import uvicorn
 import networkx as nx
 import numpy as np
-from jose import jwt, JWTError
-from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
-
-from sqlalchemy import (
-    create_engine, Column, Integer, String, Float, Boolean, 
-    DateTime, Text, JSON, ForeignKey, event
-)
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
-
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query
+import uvicorn
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.responses import FileResponse, HTMLResponse
+from jose import JWTError, jwt
+from pydantic_settings import BaseSettings
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    event,
+)
+from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 
 try:
     from sklearn.ensemble import IsolationForest
@@ -157,7 +160,7 @@ class SecurityInvariant(Base):
     required_controls = Column(JSON, nullable=False, default=list)
     forbidden_conditions = Column(JSON, nullable=False, default=list)
     enabled = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
     paths = relationship("TrafficPath", back_populates="invariant")
 
     def to_dict(self):
@@ -204,7 +207,7 @@ class TrafficPacket(Base):
     is_safe = Column(Boolean, nullable=False, default=True)
     boundary_crossed = Column(String(64), nullable=True)
     latency_ms = Column(Float, nullable=False, default=2.0)
-    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.UTC))
 
     def to_dict(self):
         return {
@@ -228,7 +231,7 @@ class Incident(Base):
     anomaly_score = Column(Float, nullable=False, default=0.0)
     root_cause = Column(Text, nullable=True)
     remediation_summary = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.UTC))
 
     def to_dict(self):
         return {
@@ -247,7 +250,7 @@ class AnomalyRecord(Base):
     is_anomaly = Column(Boolean, nullable=False)
     risk_level = Column(String(32), nullable=False)
     features = Column(JSON, nullable=False, default=dict)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.UTC))
 
     def to_dict(self):
         return {
@@ -259,7 +262,7 @@ class AnomalyRecord(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.UTC))
     actor = Column(String(64), nullable=False)
     action = Column(String(64), nullable=False, index=True)
     target = Column(String(128), nullable=False)
@@ -288,7 +291,7 @@ class User(Base):
     password_hash = Column(String(256), nullable=False)
     role = Column(String(32), nullable=False, default="SECURITY_ANALYST")
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
 
     def to_dict(self):
         return {
@@ -306,13 +309,13 @@ def verify_password(plain: str, hashed: str) -> bool:
 def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
 
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[datetime.timedelta] = None) -> str:
+def create_access_token(data: dict[str, Any], expires_delta: datetime.timedelta | None = None) -> str:
     to_encode = data.copy()
-    expire = datetime.datetime.now(datetime.timezone.utc) + (expires_delta or datetime.timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.datetime.now(datetime.UTC) + (expires_delta or datetime.timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
+def decode_access_token(token: str) -> dict[str, Any] | None:
     try:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     except JWTError:
@@ -425,10 +428,10 @@ def seed_database(db: Session, reset: bool = False):
 # 5. GRAPH, INVARIANT, FAILURE, AND REROUTING ENGINES
 # =====================================================================
 class GraphEngine:
-    def __init__(self, db: Optional[Session] = None):
+    def __init__(self, db: Session | None = None):
         self.graph = nx.DiGraph()
-        self.component_to_node: Dict[str, str] = {}
-        self.node_to_component: Dict[str, str] = {}
+        self.component_to_node: dict[str, str] = {}
+        self.node_to_component: dict[str, str] = {}
         if db:
             self.load_from_db(db)
 
@@ -446,15 +449,15 @@ class GraphEngine:
         for edge in db.query(TopologyEdge).all():
             self.graph.add_edge(edge.source_node, edge.target_node, latency_ms=edge.latency_ms, status=edge.status)
 
-    def get_path_components(self, db: Session, hops: List[str]) -> List[Component]:
+    def get_path_components(self, db: Session, hops: list[str]) -> list[Component]:
         cids = [self.node_to_component[nid] for nid in hops if nid in self.node_to_component]
         if not cids:
             return []
         comps = {c.id: c for c in db.query(Component).filter(Component.id.in_(cids)).all()}
         return [comps[cid] for cid in cids if cid in comps]
 
-    def build_dependency_map(self, db: Session) -> Dict[str, List[str]]:
-        dmap: Dict[str, List[str]] = {c.id: [] for c in db.query(Component).all()}
+    def build_dependency_map(self, db: Session) -> dict[str, list[str]]:
+        dmap: dict[str, list[str]] = {c.id: [] for c in db.query(Component).all()}
         for path in db.query(TrafficPath).filter(TrafficPath.is_active == True).all():
             for nid in (path.current_hops or []):
                 cid = self.node_to_component.get(nid)
@@ -462,10 +465,10 @@ class GraphEngine:
                     dmap[cid].append(path.id)
         return dmap
 
-    def find_candidate_alternate_paths(self, db: Session, path: TrafficPath, cutoff: int = 8) -> List[List[str]]:
-        try:
+    def find_candidate_alternate_paths(self, db: Session, path: TrafficPath, cutoff: int = 8) -> list[list[str]]:
+                try:
             all_paths = list(nx.all_simple_paths(self.graph, source=path.source_node, target=path.destination_node, cutoff=cutoff))
-        except Exception:
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
             all_paths = []
         current = tuple(path.current_hops or [])
         candidates = [p for p in all_paths if tuple(p) != current]
@@ -476,7 +479,7 @@ class GraphEngine:
 
 class InvariantEngine:
     @staticmethod
-    def verify_path(db: Session, path: TrafficPath, graph_engine: GraphEngine, hops: Optional[List[str]] = None) -> Dict[str, Any]:
+    def verify_path(db: Session, path: TrafficPath, graph_engine: GraphEngine, hops: list[str] | None = None) -> dict[str, Any]:
         eval_hops = hops if hops is not None else (path.current_hops or [])
         invariant = db.query(SecurityInvariant).filter(SecurityInvariant.id == path.applicable_invariant_id, SecurityInvariant.enabled == True).first() if path.applicable_invariant_id else None
         if not invariant:
@@ -510,10 +513,10 @@ class InvariantEngine:
         }
 
     @classmethod
-    def verify_all_paths(cls, db: Session, graph_engine: GraphEngine) -> Dict[str, Any]:
+    def verify_all_paths(cls, db: Session, graph_engine: GraphEngine) -> dict[str, Any]:
         paths = db.query(TrafficPath).filter(TrafficPath.is_active == True).all()
         guaranteed, blocked, violated = 0, 0, 0
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         for path in paths:
             res = cls.verify_path(db, path, graph_engine)
             if path.status == "BLOCKED" and res["verdict"] == "VIOLATED":
@@ -532,9 +535,9 @@ class InvariantEngine:
 
 class FailureEngine:
     @classmethod
-    def inject_failure(cls, db: Session, component_ids: List[str], failure_type: str = "MANUAL_INJECTION") -> Dict[str, Any]:
+    def inject_failure(cls, db: Session, component_ids: list[str], failure_type: str = "MANUAL_INJECTION") -> dict[str, Any]:
         comps = db.query(Component).filter(Component.id.in_(component_ids)).all()
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         for c in comps:
             c.status = "FAILED"
             c.health_score = 0.0
@@ -579,7 +582,7 @@ class FailureEngine:
         }
 
     @classmethod
-    def recover_component(cls, db: Session, component_id: str) -> Dict[str, Any]:
+    def recover_component(cls, db: Session, component_id: str) -> dict[str, Any]:
         comp = db.query(Component).filter(Component.id == component_id).first()
         if comp:
             comp.status = "HEALTHY"
@@ -591,7 +594,7 @@ class FailureEngine:
 
 class ReroutingEngine:
     @classmethod
-    def attempt_reroute_path(cls, db: Session, path_id: str) -> Dict[str, Any]:
+    def attempt_reroute_path(cls, db: Session, path_id: str) -> dict[str, Any]:
         path = db.query(TrafficPath).filter(TrafficPath.id == path_id).first()
         if not path:
             return {"error": "Path not found"}
@@ -615,7 +618,7 @@ class ReroutingEngine:
             return {"path_id": path.id, "rerouted": False, "status": "BLOCKED"}
 
     @classmethod
-    def reroute_all_affected(cls, db: Session) -> Dict[str, Any]:
+    def reroute_all_affected(cls, db: Session) -> dict[str, Any]:
         paths = db.query(TrafficPath).filter(TrafficPath.status.in_(["BLOCKED", "VIOLATED"])).all()
         rerouted = [cls.attempt_reroute_path(db, p.id) for p in paths]
         rerouted_count = sum(1 for r in rerouted if r.get("rerouted"))
@@ -626,14 +629,14 @@ class ReroutingEngine:
 
 class TrafficEngine:
     @classmethod
-    def simulate_traffic(cls, db: Session, packet_count: int = 1000) -> Dict[str, Any]:
+    def simulate_traffic(cls, db: Session, packet_count: int = 1000) -> dict[str, Any]:
         paths = db.query(TrafficPath).filter(TrafficPath.is_active == True).all()
         db.query(TrafficPacket).delete()
         db.commit()
 
         random.seed(42)
         total_delivered, total_rerouted, total_blocked, unsafe_delivered = 0, 0, 0, 0
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         sample = []
 
         for i in range(packet_count):
@@ -666,7 +669,7 @@ class TrafficEngine:
         }
 
     @classmethod
-    def get_traffic_stats(cls, db: Session) -> Dict[str, Any]:
+    def get_traffic_stats(cls, db: Session) -> dict[str, Any]:
         packets = db.query(TrafficPacket).all()
         total = len(packets)
         if not total:
@@ -678,7 +681,7 @@ class TrafficEngine:
 
 class RiskEngine:
     @classmethod
-    def calculate_risk(cls, db: Session, anomaly_score: float = 0.0) -> Dict[str, Any]:
+    def calculate_risk(cls, db: Session, anomaly_score: float = 0.0) -> dict[str, Any]:
         all_paths = db.query(TrafficPath).all()
         blocked = [p for p in all_paths if p.status in ["BLOCKED", "VIOLATED"]]
         blast_radius = (len(blocked) / len(all_paths) * 100.0) if all_paths else 0.0
@@ -703,7 +706,7 @@ class MLEngine:
             self.model = IsolationForest(n_estimators=50, random_state=42)
             self.model.fit(X_train)
 
-    def evaluate_scenario(self, scenario: str = "NORMAL") -> Dict[str, Any]:
+    def evaluate_scenario(self, scenario: str = "NORMAL") -> dict[str, Any]:
         if scenario == "BURST_ANOMALY":
             return {"anomaly_score": 0.76, "is_anomaly": True, "risk_level": "HIGH", "contributing_metrics": {"invariant_violations": 4.5, "latency_spike": 3.8}}
         return {"anomaly_score": 0.22, "is_anomaly": False, "risk_level": "LOW", "contributing_metrics": {}}
@@ -712,10 +715,10 @@ ml_engine = MLEngine()
 
 class AuditEngine:
     @classmethod
-    def record_event(cls, db: Session, actor: str, action: str, target: str, details: Dict[str, Any]) -> AuditLog:
+    def record_event(cls, db: Session, actor: str, action: str, target: str, details: dict[str, Any]) -> AuditLog:
         last = db.query(AuditLog).order_by(AuditLog.id.desc()).first()
         prev = last.current_hash if last else "0" * 64
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         curr = AuditLog.compute_hash(prev, now.strftime("%Y-%m-%dT%H:%M:%SZ"), actor, action, target, details)
         entry = AuditLog(timestamp=now, actor=actor, action=action, target=target, details=details, previous_hash=prev, current_hash=curr)
         db.add(entry)
@@ -723,7 +726,7 @@ class AuditEngine:
         return entry
 
     @classmethod
-    def verify_integrity(cls, db: Session) -> Dict[str, Any]:
+    def verify_integrity(cls, db: Session) -> dict[str, Any]:
         logs = db.query(AuditLog).order_by(AuditLog.id.asc()).all()
         expected = "0" * 64
         for l in logs:
@@ -737,7 +740,7 @@ class AuditEngine:
 
 class ExplainEngine:
     @classmethod
-    def explain_incident(cls, db: Session, failed_components: List[str], affected_paths: List[str], risk_score: float, anomaly_score: float) -> Dict[str, Any]:
+    def explain_incident(cls, db: Session, failed_components: list[str], affected_paths: list[str], risk_score: float, anomaly_score: float) -> dict[str, Any]:
         return {
             "executive_summary": f"Targeted Fail-Safe engaged with zero unsafe packet delivery during failure of {failed_components}.",
             "root_cause": f"Loss of enforcement points {failed_components}.",
@@ -747,14 +750,14 @@ class ExplainEngine:
 
 class DemoEngine:
     @classmethod
-    def run_judge_demo(cls, db: Session, packet_count: int = 1000) -> Dict[str, Any]:
+    def run_judge_demo(cls, db: Session, packet_count: int = 1000) -> dict[str, Any]:
         seed_database(db, reset=True)
-        t_base = TrafficEngine.simulate_traffic(db, packet_count)
+        TrafficEngine.simulate_traffic(db, packet_count)
         f_res = FailureEngine.inject_failure(db, ["ENC-01"])
-        t_fail = TrafficEngine.simulate_traffic(db, packet_count)
+        TrafficEngine.simulate_traffic(db, packet_count)
         r_res = ReroutingEngine.reroute_all_affected(db)
-        t_post = TrafficEngine.simulate_traffic(db, packet_count)
-        ml_res = ml_engine.evaluate_scenario("BURST_ANOMALY")
+        TrafficEngine.simulate_traffic(db, packet_count)
+        ml_engine.evaluate_scenario("BURST_ANOMALY")
         risk_res = RiskEngine.calculate_risk(db, anomaly_score=0.76)
         audit_res = AuditEngine.verify_integrity(db)
 
@@ -793,7 +796,7 @@ def health():
     return {"status": "HEALTHY", "service": settings.PROJECT_NAME, "version": settings.VERSION, "ml_engine": "ACTIVE", "database": "CONNECTED"}
 
 @app.post("/api/auth/login")
-def login(req: Dict[str, str], db: Session = Depends(get_db)):
+def login(req: dict[str, str], db: Session = Depends(get_db)):
     u = db.query(User).filter(User.username == req.get("username")).first()
     if not u or not verify_password(req.get("password", ""), u.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -816,7 +819,7 @@ def list_paths(db: Session = Depends(get_db)):
     return [p.to_dict() for p in db.query(TrafficPath).all()]
 
 @app.post("/api/failures/inject")
-def inject_fail(req: Dict[str, Any], db: Session = Depends(get_db)):
+def inject_fail(req: dict[str, Any], db: Session = Depends(get_db)):
     return FailureEngine.inject_failure(db, req.get("component_ids", []))
 
 @app.post("/api/reroute")
@@ -824,7 +827,11 @@ def reroute_call(db: Session = Depends(get_db)):
     return ReroutingEngine.reroute_all_affected(db)
 
 @app.post("/api/traffic/simulate")
-def sim_traffic(req: Dict[str, Any] = {}, db: Session = Depends(get_db)):
+def sim_traffic(
+    req: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+):
+    req = req or {}
     return TrafficEngine.simulate_traffic(db, req.get("packet_count", 1000))
 
 @app.get("/api/traffic")

@@ -1,8 +1,9 @@
 import pytest
+from app.core.topology_seed import seed_database
+from app.database import Base
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from app.database import Base
-from app.core.topology_seed import seed_database
+
 
 @pytest.fixture(scope="function")
 def db_session():

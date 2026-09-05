@@ -1,9 +1,10 @@
 import os
 import secrets
 import warnings
-from typing import Optional
-from pydantic_settings import BaseSettings
+
 from pydantic import model_validator
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "InvariantHold"
@@ -19,7 +20,7 @@ class Settings(BaseSettings):
     # In development, if it's missing we generate a random one at process
     # startup (logging a warning) instead of falling back to a known,
     # publicly-committed string. In production this is a hard failure.
-    SECRET_KEY: Optional[str] = None
+    SECRET_KEY: str | None = None
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # short-lived access token
 
@@ -34,13 +35,19 @@ class Settings(BaseSettings):
     # environment/.env (which is gitignored) so no real or example
     # credential is ever committed to source control.
     ADMIN_USER: str = "admin@invarianthold.io"
-    ADMIN_PASSWORD: Optional[str] = None
+    ADMIN_PASSWORD: str | None = None
     ANALYST_USER: str = "analyst@invarianthold.io"
-    ANALYST_PASSWORD: Optional[str] = None
+    ANALYST_PASSWORD: str | None = None
     VIEWER_USER: str = "viewer@invarianthold.io"
-    VIEWER_PASSWORD: Optional[str] = None
+    VIEWER_PASSWORD: str | None = None
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    model_config = {
+        "env_file": (
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
+            ".env"
+        ),
+        "extra": "ignore"
+    }
 
     @model_validator(mode="after")
     def _validate_secrets(self):

@@ -1,6 +1,6 @@
-import os
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
+
 from app.config import settings
 
 # SQLite connection setup

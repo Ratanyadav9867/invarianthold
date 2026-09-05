@@ -1,14 +1,17 @@
 import datetime
 import hashlib
 import json
-from sqlalchemy import Column, Integer, String, DateTime, JSON
+
+from sqlalchemy import JSON, Column, DateTime, Integer, String
+
 from app.database import Base
+
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.datetime.now(datetime.UTC))
     actor = Column(String(64), nullable=False)
     action = Column(String(64), nullable=False, index=True)
     target = Column(String(128), nullable=False)

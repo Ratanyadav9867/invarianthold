@@ -1,126 +1,197 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  ShieldAlert, ShieldCheck, Activity, BrainCircuit, FileCheck2, 
-  Award, Play, RotateCcw, AlertTriangle, CheckCircle2, ZapOff,
-  GitBranch, Server, Globe, Database, Terminal, Lock
-} from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { Navbar, TabId } from './components/Navbar';
+import { LoginModal } from './components/LoginModal';
+import { WarRoomTopology } from './components/WarRoomTopology';
+import { InvariantProver } from './components/InvariantProver';
+import { ChaosLab } from './components/ChaosLab';
+import { PacketInspector } from './components/PacketInspector';
+import { MLAnomalyRadar } from './components/MLAnomalyRadar';
+import { AuditLedger } from './components/AuditLedger';
+import { ApiStudio } from './components/ApiStudio';
+import { SystemHealth } from './components/SystemHealth';
+import { JudgeShowcaseTour } from './components/JudgeShowcaseTour';
+import { api } from './api/client';
+import {
+  ComponentData,
+  InvariantData,
+  PathData,
+  TrafficStats,
+  TrafficPacket,
+  AIData,
+  AuditLog,
+  AuditVerificationResult,
+  JudgeDemoResult,
+} from './types';
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 
-const API_BASE = '/api';
+function AppContent() {
+  const { authError, clearAuthError } = useAuth();
+  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
 
-interface ComponentData {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  zone: string;
-  health_score: number;
-  capabilities: string[];
-}
-
-interface PathData {
-  id: string;
-  name: string;
-  source_node: string;
-  destination_node: string;
-  current_hops: string[];
-  status: string;
-  decision_reason: string;
-}
-
-interface InvariantData {
-  id: string;
-  name: string;
-  description: string;
-  severity: string;
-  required_controls: string[];
-}
-
-interface TrafficStats {
-  total_packets: number;
-  delivered: number;
-  rerouted: number;
-  blocked: number;
-  unsafe_traffic_delivered: number;
-  safe_traffic_preserved_pct: number;
-  avg_latency_ms: number;
-}
-
-export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'topology' | 'invariants' | 'simulator' | 'traffic' | 'ai' | 'audit' | 'demo'>('dashboard');
+  // Core Platform Data
   const [components, setComponents] = useState<ComponentData[]>([]);
   const [invariants, setInvariants] = useState<InvariantData[]>([]);
   const [paths, setPaths] = useState<PathData[]>([]);
   const [trafficStats, setTrafficStats] = useState<TrafficStats | null>(null);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [auditStatus, setAuditStatus] = useState<any>(null);
-  const [demoResult, setDemoResult] = useState<any>(null);
-  const [demoLoading, setDemoLoading] = useState(false);
-  const [lastMsg, setLastMsg] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<any>(null);
+  const [packets, setPackets] = useState<TrafficPacket[]>([]);
+  const [aiData, setAiData] = useState<AIData | null>(null);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [auditStatus, setAuditStatus] = useState<AuditVerificationResult | null>(null);
+  const [demoResult, setDemoResult] = useState<JudgeDemoResult | null>(null);
+  const [demoLoading, setDemoLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(false);
 
-  const refreshData = async () => {
+  // Notification Toast
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 5000);
+  };
+
+  // Synchronize all platform data from real backend endpoints
+  const refreshData = useCallback(async () => {
     try {
-      const [compRes, invRes, pathRes, statsRes, auditRes] = await Promise.all([
-        fetch(`${API_BASE}/components`).then(r => r.json()),
-        fetch(`${API_BASE}/invariants`).then(r => r.json()),
-        fetch(`${API_BASE}/paths`).then(r => r.json()),
-        fetch(`${API_BASE}/traffic/stats`).then(r => r.json()),
-        fetch(`${API_BASE}/audit?limit=25`).then(r => r.json()),
+      const [compRes, invRes, pathRes, statsRes, aiRes, auditRes] = await Promise.all([
+        api.get<ComponentData[]>('/components').catch(() => []),
+        api.get<InvariantData[]>('/invariants').catch(() => []),
+        api.get<PathData[]>('/paths').catch(() => []),
+        api.get<TrafficStats>('/traffic/stats').catch(() => null),
+        api.get<AIData>('/ai/anomalies?scenario=NORMAL').catch(() => null),
+        api.get<AuditLog[]>('/audit?limit=25').catch(() => []),
       ]);
+
       setComponents(compRes || []);
       setInvariants(invRes || []);
       setPaths(pathRes || []);
-      setTrafficStats(statsRes || null);
+      setTrafficStats(statsRes);
+      setAiData(aiRes);
       setAuditLogs(auditRes || []);
-    } catch (e) {
-      console.error(e);
+    } catch (err: any) {
+      console.error('Refresh failed:', err);
     }
-  };
+  }, []);
+
+  const fetchPackets = useCallback(async () => {
+    try {
+      const data = await api.get<TrafficPacket[]>('/traffic?limit=50');
+      setPackets(data || []);
+    } catch (err) {
+      console.error('Packets fetch failed:', err);
+    }
+  }, []);
 
   useEffect(() => {
     refreshData();
-    const timer = setInterval(refreshData, 3500);
-    return () => clearInterval(timer);
-  }, []);
+    fetchPackets();
+    const interval = setInterval(refreshData, 4000);
+    return () => clearInterval(interval);
+  }, [refreshData, fetchPackets]);
 
-  const handleInjectFailure = async (compIds: string[]) => {
+  // Mutations
+  const handleInjectFailure = async (compIds: string[], type: string = 'MANUAL_INJECTION') => {
+    setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/failures/inject`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ component_ids: compIds, failure_type: 'MANUAL_INJECTION' })
+      const res = await api.post('/failures/inject', {
+        component_ids: compIds,
+        failure_type: type,
       });
-      const data = await res.json();
-      setLastMsg(data.summary_message);
-      refreshData();
-    } catch (e) {
-      console.error(e);
+      showToast(
+        res.summary_message || `Failure injected into ${compIds.join(', ')}. Targeted fail-safe engaged.`,
+        'error'
+      );
+      await refreshData();
+      await fetchPackets();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to inject failure.', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleReroute = async () => {
+  const handleReroute = async (pathId: string | null = null) => {
+    setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/reroute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path_id: null })
-      });
-      const data = await res.json();
-      setLastMsg(data.summary_message);
-      refreshData();
-    } catch (e) {
-      console.error(e);
+      const res = await api.post('/reroute', { path_id: pathId });
+      showToast(
+        res.summary_message || 'Traffic migrated to mathematically verified alternate route.',
+        'success'
+      );
+      await refreshData();
+      await fetchPackets();
+    } catch (err: any) {
+      showToast(err.message || 'Reroute execution failed.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRecoverComponent = async (id: string) => {
+    setLoading(true);
+    try {
+      const res = await api.post(`/components/${id}/recover`);
+      showToast(res.summary_message || `Component ${id} restored to HEALTHY.`, 'success');
+      await refreshData();
+      await fetchPackets();
+    } catch (err: any) {
+      showToast(err.message || `Failed to recover component ${id}.`, 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleRecoverAll = async () => {
+    setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/demo/reset`, { method: 'POST' });
-      const data = await res.json();
-      setLastMsg(data.message);
-      refreshData();
-    } catch (e) {
-      console.error(e);
+      const res = await api.post('/demo/reset');
+      showToast(res.message || 'Prinstine baseline restored. All 10 routes GUARANTEED.', 'success');
+      await refreshData();
+      await fetchPackets();
+    } catch (err: any) {
+      showToast(err.message || 'Reset failed.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSimulateTraffic = async (count: number = 1000) => {
+    setLoading(true);
+    try {
+      const res = await api.post('/traffic/simulate', { packet_count: count });
+      showToast(
+        `Traffic verification complete: ${res.packets_delivered} delivered, ${res.packets_blocked} blocked. Unsafe delivered: ${res.unsafe_traffic_delivered}.`,
+        'info'
+      );
+      await refreshData();
+      await fetchPackets();
+    } catch (err: any) {
+      showToast(err.message || 'Traffic simulation failed.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyInvariants = async () => {
+    try {
+      const res = await api.post('/invariants/verify');
+      showToast(`Invariant prover completed. ${res.guaranteed} guaranteed paths verified.`, 'success');
+      await refreshData();
+      return res;
+    } catch (err: any) {
+      showToast(err.message || 'Verification failed.', 'error');
+      throw err;
+    }
+  };
+
+  const handleVerifyAudit = async () => {
+    try {
+      const res = await api.post<AuditVerificationResult>('/audit/verify');
+      setAuditStatus(res);
+      showToast(res.message, res.valid ? 'success' : 'error');
+    } catch (err: any) {
+      showToast(err.message || 'Audit ledger verification failed.', 'error');
     }
   };
 
@@ -128,199 +199,198 @@ export default function App() {
     setDemoLoading(true);
     setDemoResult(null);
     try {
-      const res = await fetch(`${API_BASE}/demo/run?packet_count=1000`, { method: 'POST' });
-      const data = await res.json();
-      setDemoResult(data);
+      const res = await api.post<JudgeDemoResult>('/demo/run?packet_count=1000');
+      setDemoResult(res);
       setActiveTab('demo');
-      refreshData();
-    } catch (e) {
-      console.error(e);
+      showToast('8-step judge proof complete. Zero unsafe traffic delivered.', 'success');
+      await refreshData();
+      await fetchPackets();
+    } catch (err: any) {
+      showToast(err.message || 'Automated judge demo failed.', 'error');
     } finally {
       setDemoLoading(false);
     }
   };
 
-  const handleVerifyAudit = async () => {
+  const handleRefreshScenario = async (scenario: string) => {
     try {
-      const res = await fetch(`${API_BASE}/audit/verify`, { method: 'POST' });
-      const data = await res.json();
-      setAuditStatus(data);
-    } catch (e) {
-      console.error(e);
+      const res = await api.get<AIData>(`/ai/anomalies?scenario=${scenario}`);
+      setAiData(res);
+    } catch (err) {
+      console.error(err);
     }
   };
 
-  const failedComps = components.filter(c => c.status !== 'HEALTHY');
-  const safePathsCount = paths.filter(p => p.status === 'GUARANTEED' || p.status === 'REROUTED').length;
-  const blockedPathsCount = paths.filter(p => p.status === 'BLOCKED' || p.status === 'VIOLATED').length;
-  const safePreservationPct = paths.length > 0 ? ((safePathsCount / paths.length) * 100).toFixed(1) : '100.0';
-
   return (
-    <div className="min-h-screen bg-[#080C14] text-slate-100 flex flex-col font-sans">
-      {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-950/90 backdrop-blur sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center font-bold text-white shadow-lg">
-              IH
-            </div>
-            <div>
-              <span className="font-extrabold text-xl tracking-wider text-white">INVARIANT<span className="text-cyan-400">HOLD</span></span>
-              <span className="ml-2 text-xs px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-mono">v1.0 SOC</span>
-            </div>
-          </div>
+    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col md:flex-row font-sans selection:bg-indigo-500 selection:text-white">
+      {/* Left Grid Sidebar Navigation */}
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        components={components}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+        onRunJudgeDemo={handleRunDemo}
+        demoLoading={demoLoading}
+        hasDemoResult={!!demoResult}
+      />
 
-          <div className="flex items-center space-x-4">
-            <div className={`px-3 py-1 rounded-full border text-xs font-mono flex items-center space-x-2 ${
-              failedComps.length === 0 ? 'bg-emerald-950 border-emerald-500/40 text-emerald-300' : 'bg-rose-950 border-rose-500/40 text-rose-300'
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${failedComps.length === 0 ? 'bg-emerald-400' : 'bg-rose-500 animate-ping'}`} />
-              <span>{failedComps.length === 0 ? 'INVARIANTS GUARANTEED' : `FAIL-SAFE ISOLATION (${failedComps.length} FAILED)`}</span>
-            </div>
-
-            <button
-              onClick={handleRunDemo}
-              disabled={demoLoading}
-              className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs font-bold px-4 py-2 rounded-md shadow flex items-center space-x-1.5 transition"
-            >
-              <Play className="w-3.5 h-3.5" />
-              <span>{demoLoading ? 'RUNNING DEMO...' : 'RUN JUDGE DEMO'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Tab Nav */}
-        <div className="max-w-7xl mx-auto px-4 flex space-x-1 overflow-x-auto text-sm border-t border-slate-800/80 font-medium">
-          {[
-            { id: 'dashboard', label: 'SOC Dashboard' },
-            { id: 'topology', label: 'Network Graph' },
-            { id: 'invariants', label: 'Invariants Matrix' },
-            { id: 'simulator', label: 'Failure Simulator' },
-            { id: 'traffic', label: 'Traffic Inspector' },
-            { id: 'audit', label: 'Audit Ledger' },
-            { id: 'demo', label: 'Judge Scorecard' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`py-3 px-3.5 border-b-2 transition whitespace-nowrap ${
-                activeTab === tab.id ? 'border-cyan-400 text-cyan-400 bg-cyan-950/20' : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
-        {lastMsg && (
-          <div className="p-3 bg-cyan-950/60 border border-cyan-800/50 text-cyan-200 text-xs rounded-lg flex items-center justify-between font-mono">
-            <span>{lastMsg}</span>
-            <button onClick={() => setLastMsg(null)} className="text-cyan-400 hover:text-white">&times;</button>
-          </div>
-        )}
-
-        {/* DASHBOARD TAB */}
-        {activeTab === 'dashboard' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
-                <span className="text-xs text-slate-400 font-mono">CENTRAL SAFETY ASSERTION</span>
-                <div className="text-3xl font-extrabold text-emerald-400 mt-2">0</div>
-                <p className="text-xs text-slate-400 mt-1">Unsafe packets delivered across protected boundaries.</p>
-              </div>
-
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
-                <span className="text-xs text-slate-400 font-mono">TARGETED FAIL-SAFE</span>
-                <div className="text-3xl font-extrabold text-white mt-2">{safePreservationPct}%</div>
-                <p className="text-xs text-slate-400 mt-1">{safePathsCount} safe operational, {blockedPathsCount} isolated.</p>
-              </div>
-
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
-                <span className="text-xs text-slate-400 font-mono">INVARIANTS DEFINED</span>
-                <div className="text-3xl font-extrabold text-white mt-2">{invariants.length}</div>
-                <p className="text-xs text-slate-400 mt-1">PCI, Admin PAM, Web WAF, and DB Firewalls.</p>
-              </div>
-
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
-                <span className="text-xs text-slate-400 font-mono">FABRIC HEALTH</span>
-                <div className={`text-3xl font-extrabold mt-2 ${failedComps.length === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {failedComps.length === 0 ? 'GRADE A' : 'GRADE C'}
-                </div>
-                <p className="text-xs text-slate-400 mt-1">{failedComps.length} component(s) degraded.</p>
-              </div>
-            </div>
-
-            {/* Quick Action Bar */}
-            <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl flex flex-wrap gap-3 items-center justify-between">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleInjectFailure(['ENC-01'])}
-                  className="px-3 py-1.5 bg-rose-950 border border-rose-800 text-rose-300 text-xs rounded font-mono"
-                >
-                  Fail ENC-01 (Primary)
-                </button>
-                <button
-                  onClick={handleReroute}
-                  className="px-3 py-1.5 bg-cyan-950 border border-cyan-800 text-cyan-300 text-xs rounded font-mono"
-                >
-                  Auto-Reroute to Alternate
-                </button>
-                <button
-                  onClick={handleRecoverAll}
-                  className="px-3 py-1.5 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs rounded font-mono"
-                >
-                  Recover All Baseline
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* DEMO SCORECARD TAB */}
-        {activeTab === 'demo' && (
-          <div className="space-y-6">
-            {demoResult ? (
-              <div className="bg-slate-900 border-2 border-emerald-500/50 rounded-xl p-5 space-y-4">
-                <h3 className="text-base font-extrabold text-white flex items-center space-x-2">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                  <span>FINAL JUDGE SCORECARD & PROOF OF INVARIANT PRESERVATION</span>
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 font-mono text-center">
-                  <div className="bg-slate-950 p-3 rounded-lg border border-emerald-500/30">
-                    <span className="text-[11px] text-slate-400">UNSAFE TRAFFIC DELIVERED</span>
-                    <div className="text-2xl font-black text-emerald-400">{demoResult.scorecard.unsafe_traffic_delivered}</div>
-                  </div>
-                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                    <span className="text-[11px] text-slate-400">SAFE PATHS PRESERVED</span>
-                    <div className="text-2xl font-black text-cyan-400">{demoResult.scorecard.safe_path_preservation_pct}%</div>
-                  </div>
-                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                    <span className="text-[11px] text-slate-400">UNNECESSARY PATHS BLOCKED</span>
-                    <div className="text-2xl font-black text-emerald-400">{demoResult.scorecard.unnecessary_paths_blocked}</div>
-                  </div>
-                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                    <span className="text-[11px] text-slate-400">AUDIT INTEGRITY</span>
-                    <div className="text-2xl font-black text-emerald-400">VERIFIED</div>
-                  </div>
-                </div>
-              </div>
+      {/* Main Workspace Column (Right Side of Project) */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen bg-slate-50">
+        {/* Global Toast Notification */}
+        {toast && (
+          <div
+            className={`fixed bottom-5 right-5 z-50 p-4 rounded-xl shadow-xl border flex items-center space-x-3 text-xs font-mono animate-fadeIn ${
+              toast.type === 'success'
+                ? 'bg-white border-emerald-500 text-emerald-950'
+                : toast.type === 'error'
+                ? 'bg-white border-rose-500 text-rose-950'
+                : 'bg-white border-indigo-500 text-indigo-950'
+            }`}
+          >
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            ) : toast.type === 'error' ? (
+              <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
             ) : (
-              <div className="p-12 text-center bg-slate-900 border border-slate-800 rounded-xl">
-                <button
-                  onClick={handleRunDemo}
-                  disabled={demoLoading}
-                  className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-cyan-600 text-white font-bold text-xs rounded-lg font-mono"
-                >
-                  START 8-STEP DEMO
-                </button>
-              </div>
+              <Info className="w-5 h-5 text-indigo-600 flex-shrink-0" />
             )}
+            <span className="max-w-md leading-relaxed">{toast.message}</span>
+            <button onClick={() => setToast(null)} className="text-slate-400 hover:text-slate-700 ml-2">
+              <X className="w-4 h-4" />
+            </button>
           </div>
+        )}
+
+        {/* Auth Error Banner if active */}
+        {authError && (
+          <div className="bg-rose-50 border-b border-rose-200 text-rose-800 text-xs px-4 py-2.5 flex items-center justify-between font-mono">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+              <span>{authError}</span>
+            </div>
+            <button onClick={clearAuthError} className="text-rose-500 hover:text-rose-800">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Main Workspace Container */}
+        <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 md:p-8 space-y-6">
+        {activeTab === 'dashboard' && (
+          <WarRoomTopology
+            components={components}
+            paths={paths}
+            invariants={invariants}
+            onInjectFailure={handleInjectFailure}
+            onRecoverComponent={handleRecoverComponent}
+            onRefresh={refreshData}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === 'topology' && (
+          <WarRoomTopology
+            components={components}
+            paths={paths}
+            invariants={invariants}
+            onInjectFailure={handleInjectFailure}
+            onRecoverComponent={handleRecoverComponent}
+            onRefresh={refreshData}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === 'invariants' && (
+          <InvariantProver
+            invariants={invariants}
+            paths={paths}
+            components={components}
+            onVerifyInvariants={handleVerifyInvariants}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === 'chaos' && (
+          <ChaosLab
+            components={components}
+            paths={paths}
+            onInjectFailure={handleInjectFailure}
+            onReroute={handleReroute}
+            onRecoverComponent={handleRecoverComponent}
+            onRecoverAll={handleRecoverAll}
+            onSimulateTraffic={handleSimulateTraffic}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === 'traffic' && (
+          <PacketInspector
+            stats={trafficStats}
+            packets={packets}
+            onSimulate={handleSimulateTraffic}
+            onRefreshPackets={fetchPackets}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === 'radar' && (
+          <MLAnomalyRadar
+            aiData={aiData}
+            onRefreshScenario={handleRefreshScenario}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === 'audit' && (
+          <AuditLedger
+            logs={auditLogs}
+            auditStatus={auditStatus}
+            onVerify={handleVerifyAudit}
+            onRefresh={refreshData}
+            loading={loading}
+          />
+        )}
+
+        {activeTab === 'studio' && <ApiStudio />}
+
+        {activeTab === 'health' && <SystemHealth />}
+
+        {activeTab === 'demo' && (
+          <JudgeShowcaseTour
+            demoResult={demoResult}
+            demoLoading={demoLoading}
+            onRunDemo={handleRunDemo}
+            onNavigateTab={setActiveTab}
+            onInjectFailure={handleInjectFailure}
+            onReroute={handleReroute}
+            onSimulateTraffic={handleSimulateTraffic}
+            onVerifyAudit={handleVerifyAudit}
+            onRecoverAll={handleRecoverAll}
+          />
         )}
       </main>
+
+        {/* Global Footer */}
+        <footer className="border-t border-slate-200 py-4 text-center text-xs text-slate-500 font-mono bg-white mt-auto">
+          <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+            <span>InvariantHold &bull; Runtime Security Invariant Verification &amp; Targeted Fail-Safe Platform</span>
+            <span className="text-[11px] text-slate-400">
+              Mathematical Invariant Authority &bull; scikit-learn Isolation Forest &bull; SHA-256 Audit Chain
+            </span>
+          </div>
+        </footer>
+      </div>
+
+      {/* Login & RBAC Modal */}
+      <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

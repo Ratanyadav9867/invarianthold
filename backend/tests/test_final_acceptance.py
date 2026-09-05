@@ -1,20 +1,19 @@
-import pytest
-from sqlalchemy.orm import Session
+from app.config import settings
+from app.core.security import verify_password
 from app.core.topology_seed import seed_database
 from app.models.component import Component
-from app.models.invariant import TrafficPath, SecurityInvariant
-from app.models.traffic import Incident, TrafficPacket
+from app.models.invariant import SecurityInvariant, TrafficPath
+from app.models.traffic import Incident
+from app.services.audit_engine import AuditEngine
+from app.services.explain_engine import ExplainEngine
+from app.services.failure_engine import FailureEngine
 from app.services.graph_engine import GraphEngine
 from app.services.invariant_engine import InvariantEngine
-from app.services.failure_engine import FailureEngine
+from app.services.ml_engine import ml_engine
 from app.services.rerouting_engine import ReroutingEngine
 from app.services.traffic_engine import TrafficEngine
-from app.services.ml_engine import ml_engine
-from app.services.risk_engine import RiskEngine
-from app.services.explain_engine import ExplainEngine
-from app.services.audit_engine import AuditEngine
-from app.core.security import verify_password
-from app.config import settings
+from sqlalchemy.orm import Session
+
 
 def test_full_23_step_acceptance_scenario(db_session: Session):
     """

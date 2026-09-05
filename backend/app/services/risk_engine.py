@@ -1,7 +1,8 @@
-from typing import Dict, Any, List, Optional
-from sqlalchemy.orm import Session
+from typing import Any
+
 from app.models.component import Component
-from app.models.invariant import TrafficPath, SecurityInvariant
+from app.models.invariant import SecurityInvariant, TrafficPath
+from sqlalchemy.orm import Session
 
 SEVERITY_WEIGHTS = {
     "LOW": 25.0,
@@ -22,8 +23,8 @@ class RiskEngine:
         cls,
         db: Session,
         anomaly_score: float = 0.0,
-        failed_component_ids: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        failed_component_ids: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Calculate composite risk score (0-100) and return full factor breakdown.
         """

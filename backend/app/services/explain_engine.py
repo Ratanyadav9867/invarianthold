@@ -1,8 +1,10 @@
 import os
-from typing import Dict, Any, List, Optional
-from sqlalchemy.orm import Session
-from app.models.invariant import TrafficPath, SecurityInvariant
+from typing import Any
+
 from app.models.component import Component
+from app.models.invariant import SecurityInvariant, TrafficPath
+from sqlalchemy.orm import Session
+
 
 class ExplainEngine:
     """
@@ -17,7 +19,7 @@ class ExplainEngine:
         db: Session,
         path_id: str,
         risk_score: float = 0.0
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate a structured explainability record for a path decision.
         """
@@ -63,11 +65,11 @@ class ExplainEngine:
     def explain_incident(
         cls,
         db: Session,
-        failed_components: List[str],
-        affected_paths: List[str],
+        failed_components: list[str],
+        affected_paths: list[str],
         risk_score: float,
         anomaly_score: float
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate full incident root-cause analysis, security impact, and remediation plan.
         """
@@ -99,9 +101,9 @@ class ExplainEngine:
         # Remediation recommendations
         remediation = [
             f"1. Check connectivity and hardware/daemon status for node(s): {', '.join(failed_components)}.",
-            f"2. Validate that redundant failover nodes (e.g. ENC-02 for encryption) are healthy and discoverable.",
-            f"3. Run automated safe reroute via InvariantHold to migrate traffic to guaranteed alternate routes.",
-            f"4. Once primary components are recovered, execute re-verification before restoring original routes."
+            "2. Validate that redundant failover nodes (e.g. ENC-02 for encryption) are healthy and discoverable.",
+            "3. Run automated safe reroute via InvariantHold to migrate traffic to guaranteed alternate routes.",
+            "4. Once primary components are recovered, execute re-verification before restoring original routes."
         ]
 
         executive_summary = (
@@ -124,7 +126,7 @@ class ExplainEngine:
         }
 
     @staticmethod
-    def _generate_path_narrative(data: Dict[str, Any]) -> str:
+    def _generate_path_narrative(data: dict[str, Any]) -> str:
         if data["decision"] == "BLOCKED":
             return (
                 f"Path '{data['path_id']}' was safely isolated because security invariant '{data['broken_invariant']}' "

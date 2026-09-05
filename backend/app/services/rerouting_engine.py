@@ -1,9 +1,11 @@
-from typing import List, Dict, Any, Optional
 import datetime
-from sqlalchemy.orm import Session
-from app.models.invariant import TrafficPath, SecurityInvariant
+from typing import Any
+
+from app.models.invariant import TrafficPath
 from app.services.graph_engine import GraphEngine
 from app.services.invariant_engine import InvariantEngine
+from sqlalchemy.orm import Session
+
 
 class ReroutingEngine:
     """
@@ -13,7 +15,7 @@ class ReroutingEngine:
     """
 
     @classmethod
-    def attempt_reroute_path(cls, db: Session, path_id: str) -> Dict[str, Any]:
+    def attempt_reroute_path(cls, db: Session, path_id: str) -> dict[str, Any]:
         """
         Attempt to discover and migrate an unsafe or blocked path to a compliant alternate route.
         """
@@ -35,7 +37,7 @@ class ReroutingEngine:
             }
 
         # Evaluate candidate routes against the deterministic invariant engine
-        accepted_route: Optional[List[str]] = None
+        accepted_route: list[str] | None = None
         rejection_reasons = []
 
         for candidate in candidates:
@@ -50,7 +52,7 @@ class ReroutingEngine:
                     "reason": eval_res["reason"]
                 })
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
 
         if accepted_route:
             previous_hops = list(path.current_hops or [])
@@ -108,7 +110,7 @@ class ReroutingEngine:
             }
 
     @classmethod
-    def reroute_all_affected(cls, db: Session) -> Dict[str, Any]:
+    def reroute_all_affected(cls, db: Session) -> dict[str, Any]:
         """
         Scan all BLOCKED and VIOLATED paths and attempt compliant reroutes.
         """

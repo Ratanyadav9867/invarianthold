@@ -1,7 +1,10 @@
 import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, Text, JSON, ForeignKey
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
+
 from app.database import Base
+
 
 class SecurityInvariant(Base):
     __tablename__ = "security_invariants"
@@ -15,7 +18,7 @@ class SecurityInvariant(Base):
     required_controls = Column(JSON, nullable=False, default=list)
     forbidden_conditions = Column(JSON, nullable=False, default=list)
     enabled = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
 
     paths = relationship("TrafficPath", back_populates="invariant")
 

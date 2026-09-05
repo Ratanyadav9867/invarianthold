@@ -1,20 +1,19 @@
 import time
-import datetime
-from typing import Dict, Any, List
-from sqlalchemy.orm import Session
+from typing import Any
+
 from app.core.topology_seed import seed_database
-from app.models.component import Component
-from app.models.invariant import TrafficPath, SecurityInvariant
-from app.models.traffic import Incident, AnomalyRecord
+from app.models.traffic import Incident
+from app.services.audit_engine import AuditEngine
+from app.services.explain_engine import ExplainEngine
+from app.services.failure_engine import FailureEngine
 from app.services.graph_engine import GraphEngine
 from app.services.invariant_engine import InvariantEngine
-from app.services.failure_engine import FailureEngine
-from app.services.rerouting_engine import ReroutingEngine
-from app.services.traffic_engine import TrafficEngine
 from app.services.ml_engine import ml_engine
+from app.services.rerouting_engine import ReroutingEngine
 from app.services.risk_engine import RiskEngine
-from app.services.explain_engine import ExplainEngine
-from app.services.audit_engine import AuditEngine
+from app.services.traffic_engine import TrafficEngine
+from sqlalchemy.orm import Session
+
 
 class DemoEngine:
     """
@@ -24,7 +23,7 @@ class DemoEngine:
     """
 
     @classmethod
-    def run_judge_demo(cls, db: Session, packet_count: int = 1000) -> Dict[str, Any]:
+    def run_judge_demo(cls, db: Session, packet_count: int = 1000) -> dict[str, Any]:
         start_time = time.time()
         timeline = []
 

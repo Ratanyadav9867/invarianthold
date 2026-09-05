@@ -1,20 +1,20 @@
-import pytest
-from sqlalchemy.orm import Session
-from fastapi.testclient import TestClient
+from app.config import settings
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    get_password_hash,
+    verify_password,
+)
 from app.main import app
-from app.models.component import Component
-from app.models.invariant import TrafficPath
-from app.models.audit import AuditLog
-from app.services.traffic_engine import TrafficEngine
-from app.services.failure_engine import FailureEngine
-from app.services.rerouting_engine import ReroutingEngine
-from app.services.risk_engine import RiskEngine
-from app.services.ml_engine import ml_engine
 from app.services.audit_engine import AuditEngine
 from app.services.explain_engine import ExplainEngine
-from app.core.security import verify_password, get_password_hash, create_access_token, decode_access_token
-
-client = TestClient(app)
+from app.services.failure_engine import FailureEngine
+from app.services.ml_engine import ml_engine
+from app.services.rerouting_engine import ReroutingEngine
+from app.services.risk_engine import RiskEngine
+from app.services.traffic_engine import TrafficEngine
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 def test_traffic_safety_property(db_session: Session):
     """
@@ -127,38 +127,49 @@ def test_auth_and_rbac():
 
 
 def test_api_endpoints_live():
-    """Test primary REST API endpoints."""
-    # Health endpoint
-    r = client.get("/health")
-    assert r.status_code == 200
-    assert r.json()["status"] == "HEALTHY"
+    """Test primary REST API endpoints with authentication and RBAC."""
+    with TestClient(app) as client:
+        # Health endpoint
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "HEALTHY"
+        assert "subsystems" in r.json()
 
-    # List components
-    r = client.get("/api/components")
-    assert r.status_code == 200
-    assert len(r.json()) == 8
+        # List components
+        r = client.get("/api/components")
+        assert r.status_code == 200
+        assert len(r.json()) == 8
 
-    # List invariants
-    r = client.get("/api/invariants")
-    assert r.status_code == 200
-    assert len(r.json()) == 4
+        # List invariants
+        r = client.get("/api/invariants")
+        assert r.status_code == 200
+        assert len(r.json()) == 4
 
-    # List paths
-    r = client.get("/api/paths")
-    assert r.status_code == 200
-    assert len(r.json()) == 10
+        # List paths
+        r = client.get("/api/paths")
+        assert r.status_code == 200
+        assert len(r.json()) == 10
 
-    # Traffic simulation
-    r = client.post("/api/traffic/simulate", json={"packet_count": 500})
-    assert r.status_code == 200
-    data = r.json()
-    assert data["total_packets"] == 500
-    assert data["unsafe_traffic_delivered"] == 0
+        # Login as analyst to obtain bearer token
+        login_res = client.post(
+            "/api/auth/login",
+            json={"username": settings.ANALYST_USER, "password": settings.ANALYST_PASSWORD}
+        )
+        assert login_res.status_code == 200
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
 
-    # Full Judge Demo
-    r = client.post("/api/demo/run?packet_count=100")
-    assert r.status_code == 200
-    demo_data = r.json()
-    assert demo_data["demo_status"] == "SUCCESS"
-    assert demo_data["scorecard"]["unsafe_traffic_delivered"] == 0
-    assert len(demo_data["timeline"]) == 8
+        # Traffic simulation (requires auth)
+        r = client.post("/api/traffic/simulate", json={"packet_count": 500}, headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["total_packets"] == 500
+        assert data["unsafe_traffic_delivered"] == 0
+
+        # Full Judge Demo (requires auth)
+        r = client.post("/api/demo/run?packet_count=100", headers=headers)
+        assert r.status_code == 200
+        demo_data = r.json()
+        assert demo_data["demo_status"] == "SUCCESS"
+        assert demo_data["scorecard"]["unsafe_traffic_delivered"] == 0
+        assert len(demo_data["timeline"]) == 8
