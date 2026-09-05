@@ -1,0 +1,251 @@
+from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models.component import Component, TopologyNode, TopologyEdge
+from app.models.invariant import SecurityInvariant, TrafficPath
+from app.models.traffic import TrafficPacket, Incident, AnomalyRecord
+from app.models.audit import AuditLog
+from app.models.auth import User
+from app.core.security import verify_password, create_access_token
+from app.core.topology_seed import seed_database
+from app.services.graph_engine import GraphEngine
+from app.services.invariant_engine import InvariantEngine
+from app.services.failure_engine import FailureEngine
+from app.services.rerouting_engine import ReroutingEngine
+from app.services.traffic_engine import TrafficEngine
+from app.services.risk_engine import RiskEngine
+from app.services.ml_engine import ml_engine
+from app.services.explain_engine import ExplainEngine
+from app.services.audit_engine import AuditEngine
+from app.services.demo_engine import DemoEngine
+from app.schemas.common import (
+    LoginRequest, TokenResponse, FailureInjectionRequest,
+    TrafficSimulateRequest, RerouteRequest, ExplainRequest
+)
+from app.api.deps import get_current_user, require_auth, require_role
+
+router = APIRouter()
+
+# ----------------------------------------------------
+# 1. AUTHENTICATION & USERS
+# ----------------------------------------------------
+@router.post("/auth/login", response_model=TokenResponse)
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(
+        (User.username == req.username) | (User.email == req.username)
+    ).first()
+    if not user or not verify_password(req.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password."
+        )
+
+    token = create_access_token({"sub": user.username, "role": user.role})
+    AuditEngine.record_event(
+        db,
+        actor=user.username,
+        action="USER_LOGIN",
+        target=user.id,
+        details={"role": user.role}
+    )
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": user.to_dict()
+    }
+
+@router.get("/auth/me")
+def get_me(user: User = Depends(require_auth)):
+    return user.to_dict()
+
+# ----------------------------------------------------
+# 2. ENFORCEMENT COMPONENTS
+# ----------------------------------------------------
+@router.get("/components")
+def list_components(db: Session = Depends(get_db)):
+    components = db.query(Component).all()
+    return [c.to_dict() for c in components]
+
+@router.get("/components/{id}")
+def get_component(id: str, db: Session = Depends(get_db)):
+    comp = db.query(Component).filter(Component.id == id).first()
+    if not comp:
+        raise HTTPException(status_code=404, detail=f"Component {id} not found.")
+    return comp.to_dict()
+
+@router.post("/components/{id}/recover")
+def recover_component(id: str, db: Session = Depends(get_db)):
+    result = FailureEngine.recover_component(db, id)
+    AuditEngine.record_event(
+        db,
+        actor="API_USER",
+        action="COMPONENT_RECOVERED",
+        target=id,
+        details={"result": result}
+    )
+    return result
+
+# ----------------------------------------------------
+# 3. SECURITY INVARIANTS
+# ----------------------------------------------------
+@router.get("/invariants")
+def list_invariants(db: Session = Depends(get_db)):
+    invariants = db.query(SecurityInvariant).all()
+    return [inv.to_dict() for inv in invariants]
+
+@router.post("/invariants/verify")
+def verify_all_invariants(db: Session = Depends(get_db)):
+    graph_engine = GraphEngine(db)
+    summary = InvariantEngine.verify_all_paths(db, graph_engine)
+    AuditEngine.record_event(
+        db,
+        actor="API_USER",
+        action="INVARIANTS_VERIFIED",
+        target="ALL_PATHS",
+        details={"guaranteed": summary["guaranteed"], "total": summary["total_paths"]}
+    )
+    return summary
+
+# ----------------------------------------------------
+# 4. TRAFFIC PATHS
+# ----------------------------------------------------
+@router.get("/paths")
+def list_paths(db: Session = Depends(get_db)):
+    paths = db.query(TrafficPath).all()
+    return [p.to_dict() for p in paths]
+
+@router.get("/paths/affected")
+def list_affected_paths(db: Session = Depends(get_db)):
+    paths = db.query(TrafficPath).filter(
+        TrafficPath.status.in_(["BLOCKED", "VIOLATED", "REROUTED", "AT_RISK"])
+    ).all()
+    return [p.to_dict() for p in paths]
+
+@router.post("/reroute")
+def reroute_paths(req: RerouteRequest, db: Session = Depends(get_db)):
+    if req.path_id:
+        result = ReroutingEngine.attempt_reroute_path(db, req.path_id)
+    else:
+        result = ReroutingEngine.reroute_all_affected(db)
+
+    AuditEngine.record_event(
+        db,
+        actor="API_USER",
+        action="SAFE_REROUTE_EXECUTED",
+        target=req.path_id or "ALL_AFFECTED_PATHS",
+        details={"result": result}
+    )
+    return result
+
+# ----------------------------------------------------
+# 5. FAILURE INJECTION STUDIO
+# ----------------------------------------------------
+@router.post("/failures/inject")
+def inject_failure(req: FailureInjectionRequest, db: Session = Depends(get_db)):
+    result = FailureEngine.inject_failure(
+        db,
+        component_ids=req.component_ids,
+        failure_type=req.failure_type
+    )
+    AuditEngine.record_event(
+        db,
+        actor="API_USER",
+        action="FAILURE_INJECTED",
+        target=",".join(req.component_ids),
+        details={"affected_paths": result.get("affected_paths_count", 0)}
+    )
+    return result
+
+# ----------------------------------------------------
+# 6. SIMULATED TRAFFIC & PACKET VERIFIER
+# ----------------------------------------------------
+@router.post("/traffic/simulate")
+def simulate_traffic(req: TrafficSimulateRequest, db: Session = Depends(get_db)):
+    result = TrafficEngine.simulate_traffic(db, packet_count=req.packet_count)
+    return result
+
+@router.get("/traffic")
+def get_recent_traffic(limit: int = Query(default=50, le=200), db: Session = Depends(get_db)):
+    packets = db.query(TrafficPacket).order_by(TrafficPacket.timestamp.desc()).limit(limit).all()
+    return [p.to_dict() for p in packets]
+
+@router.get("/traffic/stats")
+def get_traffic_stats(db: Session = Depends(get_db)):
+    return TrafficEngine.get_traffic_stats(db)
+
+# ----------------------------------------------------
+# 7. INCIDENTS & AI SECURITY
+# ----------------------------------------------------
+@router.get("/incidents")
+def list_incidents(db: Session = Depends(get_db)):
+    incidents = db.query(Incident).order_by(Incident.created_at.desc()).all()
+    return [inc.to_dict() for inc in incidents]
+
+@router.get("/ai/anomalies")
+def get_ai_anomalies(scenario: str = Query(default="NORMAL"), db: Session = Depends(get_db)):
+    analysis = ml_engine.evaluate_scenario(scenario)
+    risk = RiskEngine.calculate_risk(db, anomaly_score=analysis["anomaly_score"])
+    return {
+        "telemetry_analysis": analysis,
+        "risk_assessment": risk
+    }
+
+@router.post("/ai/explain")
+def explain_decision(req: ExplainRequest, db: Session = Depends(get_db)):
+    if req.path_id:
+        risk = RiskEngine.calculate_risk(db)
+        return ExplainEngine.explain_path_decision(db, req.path_id, risk_score=risk["risk_score"])
+    else:
+        # Explain overall active state
+        failed_comps = [c.id for c in db.query(Component).filter(Component.status != "HEALTHY").all()]
+        affected_paths = [p.id for p in db.query(TrafficPath).filter(TrafficPath.status.in_(["BLOCKED", "VIOLATED"])).all()]
+        risk = RiskEngine.calculate_risk(db)
+        ml_res = ml_engine.evaluate_scenario("BURST_ANOMALY" if len(failed_comps) > 1 else ("SINGLE_FAILURE" if failed_comps else "NORMAL"))
+        return ExplainEngine.explain_incident(
+            db,
+            failed_components=failed_comps,
+            affected_paths=affected_paths,
+            risk_score=risk["risk_score"],
+            anomaly_score=ml_res["anomaly_score"]
+        )
+
+# ----------------------------------------------------
+# 8. CRYPTOGRAPHIC AUDIT LEDGER
+# ----------------------------------------------------
+@router.get("/audit")
+def get_audit_logs(limit: int = Query(default=100, le=500), db: Session = Depends(get_db)):
+    logs = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(limit).all()
+    return [l.to_dict() for l in logs]
+
+@router.post("/audit/verify")
+def verify_audit_ledger(db: Session = Depends(get_db)):
+    return AuditEngine.verify_integrity(db)
+
+# ----------------------------------------------------
+# 9. JUDGE DEMO MODE
+# ----------------------------------------------------
+@router.post("/demo/run")
+def run_judge_demo(packet_count: int = Query(default=1000), db: Session = Depends(get_db)):
+    return DemoEngine.run_judge_demo(db, packet_count=packet_count)
+
+@router.post("/demo/reset")
+def reset_demo_environment(db: Session = Depends(get_db)):
+    seed_database(db, reset=True)
+    AuditEngine.record_event(
+        db,
+        actor="SYSTEM",
+        action="DEMO_ENVIRONMENT_RESET",
+        target="TOPOLOGY",
+        details={"status": "HEALTHY"}
+    )
+    return {"status": "SUCCESS", "message": "Demo topology reset to healthy baseline."}
+
+# ----------------------------------------------------
+# 10. NETWORK GRAPH TOPOLOGY (REACT FLOW)
+# ----------------------------------------------------
+@router.get("/graph/topology")
+def get_graph_topology(db: Session = Depends(get_db)):
+    graph_engine = GraphEngine(db)
+    return graph_engine.get_topology_snapshot()

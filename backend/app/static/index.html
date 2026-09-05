@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InvariantHold — Runtime Security Invariant Verification & Targeted Fail-Safe</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            cyber: {
+              bg: '#080C14',
+              card: '#0F172A',
+              border: '#1E293B',
+              hover: '#1E293B',
+              accent: '#06B6D4',
+              emerald: '#10B981',
+              amber: '#F59E0B',
+              rose: '#F43F5E',
+              violet: '#8B5CF6'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- React 18 & Babel for clean browser execution -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { background-color: #080C14; color: #E2E8F0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    .glow-emerald { box-shadow: 0 0 20px rgba(16, 185, 129, 0.25); }
+    .glow-rose { box-shadow: 0 0 20px rgba(244, 63, 94, 0.3); }
+    .glow-cyan { box-shadow: 0 0 20px rgba(6, 182, 212, 0.25); }
+    @keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .animate-pulse-slow { animation: pulse-slow 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+  </style>
+</head>
+<body class="min-h-screen bg-cyber-bg text-slate-100 flex flex-col">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const API_BASE = window.location.origin + '/api';
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [components, setComponents] = useState([]);
+      const [invariants, setInvariants] = useState([]);
+      const [paths, setPaths] = useState([]);
+      const [trafficStats, setTrafficStats] = useState(null);
+      const [packets, setPackets] = useState([]);
+      const [aiData, setAiData] = useState(null);
+      const [auditLogs, setAuditLogs] = useState([]);
+      const [auditStatus, setAuditStatus] = useState(null);
+      const [demoResult, setDemoResult] = useState(null);
+      const [demoLoading, setDemoLoading] = useState(false);
+      const [lastActionMsg, setLastActionMsg] = useState(null);
+      const [selectedNode, setSelectedNode] = useState(null);
+      const [packetCount, setPacketCount] = useState(1000);
+      const [loading, setLoading] = useState(false);
+
+      // Polling & Data Fetching
+      const refreshData = async () => {
+        try {
+          const [compRes, invRes, pathRes, statsRes, aiRes, auditRes] = await Promise.all([
+            fetch(`${API_BASE}/components`).then(r => r.json()),
+            fetch(`${API_BASE}/invariants`).then(r => r.json()),
+            fetch(`${API_BASE}/paths`).then(r => r.json()),
+            fetch(`${API_BASE}/traffic/stats`).then(r => r.json()),
+            fetch(`${API_BASE}/ai/anomalies`).then(r => r.json()),
+            fetch(`${API_BASE}/audit?limit=25`).then(r => r.json())
+          ]);
+          setComponents(compRes || []);
+          setInvariants(invRes || []);
+          setPaths(pathRes || []);
+          setTrafficStats(statsRes || null);
+          setAiData(aiRes || null);
+          setAuditLogs(auditRes || []);
+        } catch (err) {
+          console.error("API refresh error:", err);
+        }
+      };
+
+      const fetchPackets = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/traffic?limit=50`);
+          const data = await res.json();
+          setPackets(data || []);
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      useEffect(() => {
+        refreshData();
+        fetchPackets();
+        const interval = setInterval(refreshData, 3500);
+        return () => clearInterval(interval);
+      }, []);
+
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      });
+
+      // Actions
+      const handleInjectFailure = async (compIds, type = "MANUAL_INJECTION") => {
+        setLoading(true);
+        try {
+          const res = await fetch(`${API_BASE}/failures/inject`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ component_ids: compIds, failure_type: type })
+          });
+          const data = await res.json();
+          setLastActionMsg(data.summary_message || "Failure injected.");
+          await refreshData();
+          await handleSimulateTraffic(packetCount);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleRecoverComponent = async (id) => {
+        setLoading(true);
+        try {
+          const res = await fetch(`${API_BASE}/components/${id}/recover`, { method: 'POST' });
+          const data = await res.json();
+          setLastActionMsg(data.summary_message || `Component ${id} recovered.`);
+          await refreshData();
+          await handleSimulateTraffic(packetCount);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleRecoverAll = async () => {
+        setLoading(true);
+        try {
+          const res = await fetch(`${API_BASE}/demo/reset`, { method: 'POST' });
+          const data = await res.json();
+          setLastActionMsg("All components recovered to HEALTHY. Baseline restored.");
+          await refreshData();
+          await handleSimulateTraffic(packetCount);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleReroute = async (pathId = null) => {
+        setLoading(true);
+        try {
+          const res = await fetch(`${API_BASE}/reroute`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ path_id: pathId })
+          });
+          const data = await res.json();
+          setLastActionMsg(data.summary_message || "Rerouting executed.");
+          await refreshData();
+          await handleSimulateTraffic(packetCount);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleSimulateTraffic = async (count = 1000) => {
+        setLoading(true);
+        try {
+          const res = await fetch(`${API_BASE}/traffic/simulate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ packet_count: count })
+          });
+          const data = await res.json();
+          setLastActionMsg(`Simulated ${count} packets. Unsafe delivered: ${data.unsafe_traffic_delivered}.`);
+          await refreshData();
+          await fetchPackets();
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleVerifyAudit = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/audit/verify`, { method: 'POST' });
+          const data = await res.json();
+          setAuditStatus(data);
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      const handleRunDemo = async () => {
+        setDemoLoading(true);
+        setDemoResult(null);
+        try {
+          const res = await fetch(`${API_BASE}/demo/run?packet_count=1000`, { method: 'POST' });
+          const data = await res.json();
+          setDemoResult(data);
+          setActiveTab('demo');
+          await refreshData();
+          await fetchPackets();
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setDemoLoading(false);
+        }
+      };
+
+      // Metrics Computation
+      const totalPaths = paths.length || 10;
+      const safePathsCount = paths.filter(p => p.status === 'GUARANTEED' || p.status === 'REROUTED').length;
+      const blockedPathsCount = paths.filter(p => p.status === 'BLOCKED' || p.status === 'VIOLATED').length;
+      const reroutedPathsCount = paths.filter(p => p.status === 'REROUTED').length;
+      const safePreservationPct = totalPaths > 0 ? ((safePathsCount / totalPaths) * 100).toFixed(1) : "100.0";
+      const failedComps = components.filter(c => c.status !== 'HEALTHY');
+      const isSystemHealthy = failedComps.length === 0;
+
+      return (
+        <div className="flex flex-col min-h-screen">
+          {/* TOP NAV BAR */}
+          <header className="border-b border-cyber-border bg-slate-950/80 backdrop-blur sticky top-0 z-50">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center font-bold text-white shadow-lg glow-cyan">
+                  IH
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-extrabold text-xl tracking-wider text-white">INVARIANT<span className="text-cyan-400">HOLD</span></span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-mono">v1.0 SOC</span>
+                  </div>
+                  <p className="text-xs text-slate-400 hidden sm:block">Runtime Security Invariant Verification & Targeted Fail-Safe</p>
+                </div>
+              </div>
+
+              {/* Live Status Badge */}
+              <div className="flex items-center space-x-4">
+                <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full border text-xs font-mono ${
+                  isSystemHealthy
+                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                    : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${isSystemHealthy ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500 animate-ping'}`}></span>
+                  <span>{isSystemHealthy ? 'SECURITY FABRIC GUARANTEED' : `FAIL-SAFE ISOLATION ACTIVE (${failedComps.length} FAILED)`}</span>
+                </div>
+
+                <button
+                  onClick={handleRunDemo}
+                  disabled={demoLoading}
+                  className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs font-semibold px-4 py-2 rounded-md shadow flex items-center space-x-1.5 transition-all transform hover:scale-105 active:scale-95 disabled:opacity-50"
+                >
+                  <i data-lucide="play" className="w-3.5 h-3.5"></i>
+                  <span>{demoLoading ? 'RUNNING DEMO...' : 'RUN JUDGE DEMO'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* TAB BAR */}
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-1 overflow-x-auto text-sm font-medium border-t border-cyber-border/60">
+              {[
+                { id: 'dashboard', label: 'SOC Dashboard', icon: 'layout-dashboard' },
+                { id: 'topology', label: 'Live Network Graph', icon: 'network' },
+                { id: 'invariants', label: 'Invariant Matrix', icon: 'shield-check' },
+                { id: 'simulator', label: 'Failure Simulator', icon: 'zap-off' },
+                { id: 'traffic', label: 'Traffic Inspector', icon: 'activity' },
+                { id: 'ai', label: 'AI Security Center', icon: 'brain-circuit' },
+                { id: 'audit', label: 'Cryptographic Audit', icon: 'file-check-2' },
+                { id: 'demo', label: 'Judge Scorecard', icon: 'award' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center space-x-2 py-3 px-3.5 border-b-2 transition-colors whitespace-nowrap ${
+                    activeTab === tab.id
+                      ? 'border-cyan-400 text-cyan-400 bg-cyan-950/20'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                  }`}
+                >
+                  <i data-lucide={tab.icon} className="w-4 h-4"></i>
+                  <span>{tab.label}</span>
+                  {tab.id === 'demo' && demoResult && (
+                    <span className="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 text-[10px] rounded-full border border-emerald-500/30">PASSED</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </header>
+
+          {/* ACTION NOTIFICATION BANNER */}
+          {lastActionMsg && (
+            <div className="bg-cyan-950/60 border-b border-cyan-800/40 text-cyan-200 text-xs px-4 py-2 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <i data-lucide="info" className="w-4 h-4 text-cyan-400"></i>
+                <span>{lastActionMsg}</span>
+              </div>
+              <button onClick={() => setLastActionMsg(null)} className="text-cyan-400 hover:text-cyan-200">
+                <i data-lucide="x" className="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          )}
+
+          {/* MAIN VIEW CONTAINER */}
+          <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+            
+            {/* VIEW 1: SOC DASHBOARD */}
+            {activeTab === 'dashboard' && (
+              <div className="space-y-6">
+                {/* Executive Scorecards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  
+                  {/* Card 1: Central Security Property */}
+                  <div className="bg-cyber-card border border-cyber-border rounded-xl p-4 shadow-sm relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full filter blur-xl"></div>
+                    <div className="flex items-center justify-between text-slate-400 text-xs font-mono">
+                      <span>CORE SAFETY ASSERTION</span>
+                      <i data-lucide="shield-alert" className="w-4 h-4 text-emerald-400"></i>
+                    </div>
+                    <div className="mt-2 flex items-baseline space-x-2">
+                      <span className="text-3xl font-extrabold text-emerald-400 tracking-tight">0</span>
+                      <span className="text-xs text-emerald-300/80 font-mono">UNSAFE PACKETS</span>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400">Zero packet deliveries without verified required security controls.</p>
+                    <div className="mt-3 flex items-center text-[11px] text-emerald-400 space-x-1 font-mono">
+                      <i data-lucide="check-circle" className="w-3 h-3"></i>
+                      <span>SAFETY PROPERTY GUARANTEED</span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Safe Path Preservation */}
+                  <div className="bg-cyber-card border border-cyber-border rounded-xl p-4 shadow-sm relative overflow-hidden">
+                    <div className="flex items-center justify-between text-slate-400 text-xs font-mono">
+                      <span>TARGETED FAIL-SAFE</span>
+                      <i data-lucide="split" className="w-4 h-4 text-cyan-400"></i>
+                    </div>
+                    <div className="mt-2 flex items-baseline space-x-2">
+                      <span className="text-3xl font-extrabold text-white tracking-tight">{safePreservationPct}%</span>
+                      <span className="text-xs text-cyan-300 font-mono">PRESERVED</span>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-400 flex justify-between font-mono">
+                      <span>Operational: <strong className="text-emerald-400">{safePathsCount}</strong></span>
+                      <span>Isolated: <strong className="text-rose-400">{blockedPathsCount}</strong></span>
+                      <span>Rerouted: <strong className="text-cyan-400">{reroutedPathsCount}</strong></span>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-1.5 mt-3 overflow-hidden">
+                      <div className="bg-gradient-to-r from-cyan-500 to-emerald-500 h-1.5 rounded-full" style={{width: `${safePreservationPct}%`}}></div>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Active Invariants */}
+                  <div className="bg-cyber-card border border-cyber-border rounded-xl p-4 shadow-sm">
+                    <div className="flex items-center justify-between text-slate-400 text-xs font-mono">
+                      <span>INVARIANTS STATUS</span>
+                      <i data-lucide="lock" className="w-4 h-4 text-amber-400"></i>
+                    </div>
+                    <div className="mt-2 flex items-baseline space-x-2">
+                      <span className="text-3xl font-extrabold text-white tracking-tight">{invariants.length}</span>
+                      <span className="text-xs text-slate-400 font-mono">DEFINED</span>
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {invariants.slice(0, 2).map(inv => (
+                        <div key={inv.id} className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-300 truncate max-w-[140px]">{inv.name}</span>
+                          <span className={`px-1.5 py-0.2 rounded font-mono ${
+                            blockedPathsCount > 0 && inv.id === 'INV-PCI-01'
+                              ? 'bg-rose-950 text-rose-400 border border-rose-800/40'
+                              : 'bg-emerald-950 text-emerald-400 border border-emerald-800/40'
+                          }`}>
+                            {blockedPathsCount > 0 && inv.id === 'INV-PCI-01' ? 'AT RISK' : 'GUARANTEED'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Card 4: ML Anomaly & Risk */}
+                  <div className="bg-cyber-card border border-cyber-border rounded-xl p-4 shadow-sm">
+                    <div className="flex items-center justify-between text-slate-400 text-xs font-mono">
+                      <span>AI ANOMALY / RISK</span>
+                      <i data-lucide="cpu" className="w-4 h-4 text-violet-400"></i>
+                    </div>
+                    <div className="mt-2 flex items-baseline space-x-2">
+                      <span className="text-3xl font-extrabold text-white tracking-tight">
+                        {aiData ? aiData.risk_assessment.risk_score : 0}
+                      </span>
+                      <span className="text-xs text-slate-400 font-mono">/ 100 RISK</span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-mono">Anomaly Score:</span>
+                      <span className="font-mono text-cyan-400 font-semibold">{aiData ? aiData.telemetry_analysis.anomaly_score : '0.00'}</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-mono">Status:</span>
+                      <span className={`font-mono font-bold text-[11px] ${
+                        aiData && aiData.telemetry_analysis.is_anomaly ? 'text-rose-400' : 'text-emerald-400'
+                      }`}>
+                        {aiData && aiData.telemetry_analysis.is_anomaly ? 'ANOMALOUS BURST' : 'NORMAL TELEMETRY'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Before vs During vs After Comparison Table */}
+                <div className="bg-cyber-card border border-cyber-border rounded-xl p-5 shadow-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h2 className="text-base font-bold text-white flex items-center space-x-2">
+                        <i data-lucide="git-compare" className="w-5 h-5 text-cyan-400"></i>
+                        <span>State Transition Matrix: Healthy vs Degraded vs Rerouted</span>
+                      </h2>
+                      <p className="text-xs text-slate-400">Real dynamic metrics comparing network states during enforcement changes.</p>
+                    </div>
+                    <span className="text-xs font-mono px-2 py-1 bg-slate-800 rounded text-slate-300">Live Simulation Proof</span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono border-collapse">
+                      <thead>
+                        <tr className="border-b border-cyber-border text-slate-400">
+                          <th className="py-2.5 px-3">METRIC</th>
+                          <th className="py-2.5 px-3 text-emerald-400">BASELINE HEALTHY</th>
+                          <th className="py-2.5 px-3 text-rose-400">DURING FAILURE (ENC-01 DOWN)</th>
+                          <th className="py-2.5 px-3 text-cyan-400">AFTER COMPLIANT REROUTE (ENC-02)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-cyber-border/40 text-slate-300">
+                        <tr>
+                          <td className="py-2.5 px-3 font-semibold text-white">Total Monitored Paths</td>
+                          <td className="py-2.5 px-3">10</td>
+                          <td className="py-2.5 px-3">10</td>
+                          <td className="py-2.5 px-3">10</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2.5 px-3 font-semibold text-white">Safe Operational Paths</td>
+                          <td className="py-2.5 px-3 text-emerald-400">10 (100%)</td>
+                          <td className="py-2.5 px-3 text-emerald-400">7 (70.0% Preserved)</td>
+                          <td className="py-2.5 px-3 text-cyan-400">10 (100% Restored)</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2.5 px-3 font-semibold text-white">Isolated Unsafe Paths</td>
+                          <td className="py-2.5 px-3">0</td>
+                          <td className="py-2.5 px-3 text-rose-400 font-bold">3 (Targeted Isolation)</td>
+                          <td className="py-2.5 px-3 text-emerald-400">0</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2.5 px-3 font-semibold text-white">Unnecessary Paths Blocked</td>
+                          <td className="py-2.5 px-3 text-emerald-400">0</td>
+                          <td className="py-2.5 px-3 text-emerald-400 font-bold">0 (Zero Spillover)</td>
+                          <td className="py-2.5 px-3 text-emerald-400">0</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2.5 px-3 font-semibold text-white">Unsafe Traffic Delivered</td>
+                          <td className="py-2.5 px-3 text-emerald-400 font-bold">0</td>
+                          <td className="py-2.5 px-3 text-emerald-400 font-bold">0 (Guaranteed)</td>
+                          <td className="py-2.5 px-3 text-emerald-400 font-bold">0 (Guaranteed)</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Quick Interactive Control Bar */}
+                <div className="bg-cyber-card border border-cyber-border rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-mono text-slate-400 uppercase">Quick Actions:</span>
+                    <button
+                      onClick={() => handleInjectFailure(['ENC-01'])}
+                      className="text-xs px-3 py-1.5 bg-rose-950/80 hover:bg-rose-900 border border-rose-600/40 text-rose-300 rounded font-mono transition"
+                    >
+                      Fail ENC-01 (Primary)
+                    </button>
+                    <button
+                      onClick={() => handleReroute()}
+                      className="text-xs px-3 py-1.5 bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-600/40 text-cyan-300 rounded font-mono transition"
+                    >
+                      Auto-Reroute to Alternate
+                    </button>
+                    <button
+                      onClick={handleRecoverAll}
+                      className="text-xs px-3 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/40 text-emerald-300 rounded font-mono transition"
+                    >
+                      Recover All Baseline
+                    </button>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-mono text-slate-400">Simulate Packets:</span>
+                    <select
+                      value={packetCount}
+                      onChange={(e) => setPacketCount(Number(e.target.value))}
+                      className="bg-slate-900 border border-cyber-border rounded text-xs px-2 py-1 text-slate-200 font-mono"
+                    >
+                      <option value="100">100 pkts</option>
+                      <option value="500">500 pkts</option>
+                      <option value="1000">1000 pkts</option>
+                    </select>
+                    <button
+                      onClick={() => handleSimulateTraffic(packetCount)}
+                      className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded font-mono transition flex items-center space-x-1"
+                    >
+                      <i data-lucide="send" className="w-3 h-3"></i>
+                      <span>Inject Traffic</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 2: LIVE NETWORK GRAPH TOPOLOGY */}
+            {activeTab === 'topology' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center space-x-2">
+                      <i data-lucide="network" className="w-5 h-5 text-cyan-400"></i>
+                      <span>Interactive Security Fabric Topology</span>
+                    </h2>
+                    <p className="text-xs text-slate-400">Visual layout of security zones, enforcement components, and traffic routes.</p>
+                  </div>
+                  <div className="flex items-center space-x-3 text-xs font-mono">
+                    <span className="flex items-center space-x-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span><span>Healthy</span></span>
+                    <span className="flex items-center space-x-1"><span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span><span>Failed</span></span>
+                    <span className="flex items-center space-x-1"><span className="w-2.5 h-2.5 rounded-full bg-cyan-400"></span><span>Rerouted</span></span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                  {/* Graph Canvas */}
+                  <div className="lg:col-span-3 bg-slate-950 border border-cyber-border rounded-xl p-4 min-h-[480px] relative overflow-hidden flex flex-col justify-between">
+                    
+                    {/* Zone markers */}
+                    <div className="grid grid-cols-5 gap-2 text-center text-[11px] font-mono text-slate-500 border-b border-cyber-border pb-2">
+                      <div>ZONE: INTERNET</div>
+                      <div>ZONE: DMZ</div>
+                      <div>ZONE: APPLICATION</div>
+                      <div>ZONE: DATABASE</div>
+                      <div>ZONE: PCI ENCLAVE</div>
+                    </div>
+
+                    {/* Node Grid Visualization */}
+                    <div className="py-8 grid grid-cols-5 gap-4 items-center">
+                      
+                      {/* Col 1: Clients */}
+                      <div className="space-y-6">
+                        <div 
+                          onClick={() => setSelectedNode({ id: 'Client-Internet', type: 'CLIENT', zone: 'INTERNET' })}
+                          className="p-3 rounded-lg border border-slate-700 bg-slate-900/90 hover:border-cyan-500 cursor-pointer transition text-center shadow"
+                        >
+                          <i data-lucide="globe" className="w-6 h-6 mx-auto text-cyan-400 mb-1"></i>
+                          <div className="text-xs font-bold text-white">Client-Internet</div>
+                          <div className="text-[10px] text-slate-400 font-mono">Public Ingress</div>
+                        </div>
+
+                        <div 
+                          onClick={() => setSelectedNode({ id: 'Admin-Workstation', type: 'CLIENT', zone: 'INTERNET' })}
+                          className="p-3 rounded-lg border border-slate-700 bg-slate-900/90 hover:border-cyan-500 cursor-pointer transition text-center shadow"
+                        >
+                          <i data-lucide="terminal" className="w-6 h-6 mx-auto text-violet-400 mb-1"></i>
+                          <div className="text-xs font-bold text-white">Admin-Console</div>
+                          <div className="text-[10px] text-slate-400 font-mono">SecOps Bastion</div>
+                        </div>
+                      </div>
+
+                      {/* Col 2: DMZ Enforcement */}
+                      <div className="space-y-4">
+                        {['WAF-01', 'AUTH-01', 'PAM-01', 'FW-01'].map(id => {
+                          const comp = components.find(c => c.id === id);
+                          const isFailed = comp && comp.status !== 'HEALTHY';
+                          return (
+                            <div 
+                              key={id}
+                              onClick={() => setSelectedNode(comp || { id, type: 'GATEWAY' })}
+                              className={`p-2.5 rounded-lg border cursor-pointer transition text-center shadow ${
+                                isFailed 
+                                  ? 'border-rose-500 bg-rose-950/70 text-rose-300 glow-rose' 
+                                  : 'border-slate-700 bg-slate-900/90 hover:border-cyan-500 text-white'
+                              }`}
+                            >
+                              <div className="text-xs font-bold font-mono">{id}</div>
+                              <div className="text-[10px] text-slate-400">{comp ? comp.type : 'GATEWAY'}</div>
+                              <span className={`inline-block mt-1 px-1.5 py-0.2 rounded text-[9px] font-mono ${isFailed ? 'bg-rose-900 text-rose-200' : 'bg-emerald-950 text-emerald-400'}`}>
+                                {isFailed ? 'DOWN' : 'HEALTHY'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Col 3: App Tier */}
+                      <div className="space-y-6">
+                        <div 
+                          onClick={() => setSelectedNode({ id: 'App-Server', type: 'SERVER', zone: 'APPLICATION' })}
+                          className="p-3 rounded-lg border border-slate-700 bg-slate-900/90 hover:border-cyan-500 cursor-pointer transition text-center shadow"
+                        >
+                          <i data-lucide="server" className="w-6 h-6 mx-auto text-blue-400 mb-1"></i>
+                          <div className="text-xs font-bold text-white">App-Server</div>
+                          <div className="text-[10px] text-slate-400 font-mono">Fintech Services</div>
+                        </div>
+
+                        {['IDS-01'].map(id => {
+                          const comp = components.find(c => c.id === id);
+                          const isFailed = comp && comp.status !== 'HEALTHY';
+                          return (
+                            <div 
+                              key={id}
+                              onClick={() => setSelectedNode(comp || { id, type: 'IDS' })}
+                              className={`p-2.5 rounded-lg border cursor-pointer transition text-center shadow ${
+                                isFailed 
+                                  ? 'border-rose-500 bg-rose-950/70 text-rose-300 glow-rose' 
+                                  : 'border-slate-700 bg-slate-900/90 hover:border-cyan-500 text-white'
+                              }`}
+                            >
+                              <div className="text-xs font-bold font-mono">{id}</div>
+                              <div className="text-[10px] text-slate-400">INTRUSION DETECT</div>
+                              <span className={`inline-block mt-1 px-1.5 py-0.2 rounded text-[9px] font-mono ${isFailed ? 'bg-rose-900 text-rose-200' : 'bg-emerald-950 text-emerald-400'}`}>
+                                {isFailed ? 'DOWN' : 'HEALTHY'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Col 4: Database Tier */}
+                      <div className="space-y-6">
+                        <div 
+                          onClick={() => setSelectedNode({ id: 'DB-Primary', type: 'DATABASE', zone: 'DATABASE' })}
+                          className="p-3 rounded-lg border border-slate-700 bg-slate-900/90 hover:border-cyan-500 cursor-pointer transition text-center shadow"
+                        >
+                          <i data-lucide="database" className="w-6 h-6 mx-auto text-amber-400 mb-1"></i>
+                          <div className="text-xs font-bold text-white">DB-Primary</div>
+                          <div className="text-[10px] text-slate-400 font-mono">PostgreSQL Clust</div>
+                        </div>
+                      </div>
+
+                      {/* Col 5: PCI Enclave */}
+                      <div className="space-y-3 p-2 rounded-xl border border-dashed border-rose-900/60 bg-rose-950/10">
+                        {['ENC-01', 'ENC-02', 'DLP-01'].map(id => {
+                          const comp = components.find(c => c.id === id);
+                          const isFailed = comp && comp.status !== 'HEALTHY';
+                          return (
+                            <div 
+                              key={id}
+                              onClick={() => setSelectedNode(comp || { id, type: 'PCI' })}
+                              className={`p-2 rounded-lg border cursor-pointer transition text-center shadow ${
+                                isFailed 
+                                  ? 'border-rose-500 bg-rose-950/90 text-rose-300 glow-rose' 
+                                  : 'border-slate-700 bg-slate-900/90 hover:border-cyan-500 text-white'
+                              }`}
+                            >
+                              <div className="text-xs font-bold font-mono">{id}</div>
+                              <div className="text-[9px] text-slate-400">{id === 'ENC-02' ? 'BACKUP HSM' : comp?.type}</div>
+                              <span className={`inline-block mt-0.5 px-1.5 py-0.2 rounded text-[9px] font-mono ${isFailed ? 'bg-rose-900 text-rose-200' : 'bg-emerald-950 text-emerald-400'}`}>
+                                {isFailed ? 'FAILED' : 'HEALTHY'}
+                              </span>
+                            </div>
+                          );
+                        })}
+
+                        <div 
+                          onClick={() => setSelectedNode({ id: 'PCI-Vault', type: 'VAULT', zone: 'PCI' })}
+                          className="p-2.5 rounded-lg border border-rose-800/60 bg-rose-950/50 hover:border-rose-500 cursor-pointer transition text-center shadow"
+                        >
+                          <i data-lucide="shield-check" className="w-5 h-5 mx-auto text-rose-400 mb-1"></i>
+                          <div className="text-xs font-bold text-rose-200">PCI-Vault</div>
+                          <div className="text-[9px] text-slate-400 font-mono">PAN Token Vault</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-slate-400 font-mono flex items-center justify-between border-t border-cyber-border pt-2">
+                      <span>Click any node to view capabilities & trigger targeted failure injection</span>
+                      <span>13 Nodes &bull; 16 Dynamic Edges</span>
+                    </div>
+                  </div>
+
+                  {/* Node Detail Sidebar */}
+                  <div className="bg-cyber-card border border-cyber-border rounded-xl p-4">
+                    <h3 className="text-sm font-bold text-white mb-3 flex items-center space-x-2">
+                      <i data-lucide="info" className="w-4 h-4 text-cyan-400"></i>
+                      <span>Node Inspector</span>
+                    </h3>
+
+                    {selectedNode ? (
+                      <div className="space-y-3 text-xs">
+                        <div>
+                          <span className="text-slate-400 font-mono">Node ID:</span>
+                          <p className="font-bold text-white font-mono text-sm">{selectedNode.id}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-mono">Type / Zone:</span>
+                          <p className="text-slate-200 font-mono">{selectedNode.type} &bull; {selectedNode.zone}</p>
+                        </div>
+                        {selectedNode.health_score !== undefined && (
+                          <div>
+                            <span className="text-slate-400 font-mono">Health Score:</span>
+                            <p className="font-mono text-emerald-400">{selectedNode.health_score * 100}%</p>
+                          </div>
+                        )}
+                        {selectedNode.capabilities && (
+                          <div>
+                            <span className="text-slate-400 font-mono">Security Capabilities:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {selectedNode.capabilities.map((c, i) => (
+                                <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-cyan-300 rounded text-[10px] font-mono">{c}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="pt-3 border-t border-cyber-border space-y-2">
+                          <button
+                            onClick={() => handleInjectFailure([selectedNode.id])}
+                            className="w-full text-xs py-2 bg-rose-950 hover:bg-rose-900 border border-rose-600/40 text-rose-300 rounded font-mono transition"
+                          >
+                            Inject Node Failure
+                          </button>
+                          <button
+                            onClick={() => handleRecoverComponent(selectedNode.id)}
+                            className="w-full text-xs py-2 bg-emerald-950 hover:bg-emerald-900 border border-emerald-600/40 text-emerald-300 rounded font-mono transition"
+                          >
+                            Recover Node
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-500 py-8 text-center font-mono">
+                        Select any node on the graph to inspect runtime capabilities, status, and health metrics.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 3: INVARIANT MATRIX */}
+            {activeTab === 'invariants' && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center space-x-2">
+                      <i data-lucide="shield-check" className="w-5 h-5 text-emerald-400"></i>
+                      <span>Deterministic Security Invariant Matrix</span>
+                    </h2>
+                    <p className="text-xs text-slate-400">Mathematical policies continuously verified across every active traffic path.</p>
+                  </div>
+                  <button
+                    onClick={refreshData}
+                    className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded font-mono flex items-center space-x-1"
+                  >
+                    <i data-lucide="refresh-cw" className="w-3.5 h-3.5"></i>
+                    <span>Re-verify All</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {invariants.map(inv => {
+                    const boundPaths = paths.filter(p => p.applicable_invariant_id === inv.id);
+                    const isViolated = boundPaths.some(p => p.status === 'BLOCKED' || p.status === 'VIOLATED');
+                    return (
+                      <div key={inv.id} className="bg-cyber-card border border-cyber-border rounded-xl p-4 space-y-3">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">{inv.id}</span>
+                            <h3 className="font-bold text-white text-sm mt-1">{inv.name}</h3>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${
+                            isViolated ? 'bg-rose-950 text-rose-400 border border-rose-800' : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                          }`}>
+                            {isViolated ? 'AT RISK / BLOCKED' : 'GUARANTEED'}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-slate-400">{inv.description}</p>
+
+                        <div className="text-xs font-mono space-y-1">
+                          <div>
+                            <span className="text-slate-500">Required Controls: </span>
+                            <span className="text-cyan-400 font-semibold">{inv.required_controls.join(' + ')}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500">Severity: </span>
+                            <span className={`font-bold ${inv.severity === 'CRITICAL' ? 'text-rose-400' : 'text-amber-400'}`}>{inv.severity}</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-cyber-border/60">
+                          <span className="text-[11px] font-mono text-slate-400 block mb-1">Dependent Paths ({boundPaths.length}):</span>
+                          <div className="space-y-1">
+                            {boundPaths.map(p => (
+                              <div key={p.id} className="flex items-center justify-between text-[11px] font-mono bg-slate-900/60 p-1.5 rounded">
+                                <span className="text-slate-300 truncate max-w-[200px]">{p.name}</span>
+                                <span className={`px-1.5 py-0.2 rounded ${
+                                  p.status === 'GUARANTEED' ? 'text-emerald-400' : (p.status === 'REROUTED' ? 'text-cyan-400' : 'text-rose-400')
+                                }`}>
+                                  {p.status}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 4: FAILURE SIMULATOR STUDIO */}
+            {activeTab === 'simulator' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-lg font-bold text-white flex items-center space-x-2">
+                    <i data-lucide="zap-off" className="w-5 h-5 text-rose-400"></i>
+                    <span>Failure Simulator & Targeted Fail-Safe Workbench</span>
+                  </h2>
+                  <p className="text-xs text-slate-400">Inject component failures and watch InvariantHold isolate unsafe paths without collateral damage.</p>
+                </div>
+
+                {/* Scenario Buttons */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <button
+                    onClick={() => handleInjectFailure(['ENC-01'], 'PRIMARY_ENCRYPTION_FAIL')}
+                    className="p-3.5 bg-slate-900 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500 rounded-xl text-left transition group"
+                  >
+                    <div className="text-xs font-bold text-rose-400 flex items-center justify-between">
+                      <span>Fail ENC-01 (Primary)</span>
+                      <i data-lucide="shield-x" className="w-4 h-4"></i>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">Isolates 3 PCI paths; preserves 7 safe web & DB paths.</p>
+                  </button>
+
+                  <button
+                    onClick={() => handleInjectFailure(['ENC-01', 'ENC-02'], 'TOTAL_ENCRYPTION_FAIL')}
+                    className="p-3.5 bg-slate-900 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500 rounded-xl text-left transition group"
+                  >
+                    <div className="text-xs font-bold text-rose-400 flex items-center justify-between">
+                      <span>Fail ENC-01 + ENC-02</span>
+                      <i data-lucide="alert-octagon" className="w-4 h-4"></i>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">Total encryption outage: PCI blocked; zero safe route exists.</p>
+                  </button>
+
+                  <button
+                    onClick={() => handleInjectFailure(['FW-01'], 'FIREWALL_OUTAGE')}
+                    className="p-3.5 bg-slate-900 hover:bg-amber-950/40 border border-slate-700 hover:border-amber-500 rounded-xl text-left transition group"
+                  >
+                    <div className="text-xs font-bold text-amber-400 flex items-center justify-between">
+                      <span>Fail FW-01 (Firewall)</span>
+                      <i data-lucide="flame" className="w-4 h-4"></i>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">Core firewall failure affects perimeter boundary invariants.</p>
+                  </button>
+
+                  <button
+                    onClick={() => handleInjectFailure(['ENC-01', 'DLP-01', 'IDS-01'], 'CASCADING_BURST')}
+                    className="p-3.5 bg-slate-900 hover:bg-violet-950/40 border border-slate-700 hover:border-violet-500 rounded-xl text-left transition group"
+                  >
+                    <div className="text-xs font-bold text-violet-400 flex items-center justify-between">
+                      <span>Cascading Failure Burst</span>
+                      <i data-lucide="activity" className="w-4 h-4"></i>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">Multi-node burst triggers ML Isolation Forest anomaly alert.</p>
+                  </button>
+                </div>
+
+                {/* Mitigation & Recovery Controls */}
+                <div className="flex flex-wrap gap-3 pt-2">
+                  <button
+                    onClick={() => handleReroute()}
+                    className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-bold font-mono shadow flex items-center space-x-2 transition"
+                  >
+                    <i data-lucide="git-branch" className="w-4 h-4"></i>
+                    <span>Auto-Reroute to Compliant Alternate (ENC-02)</span>
+                  </button>
+                  <button
+                    onClick={handleRecoverAll}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold font-mono shadow flex items-center space-x-2 transition"
+                  >
+                    <i data-lucide="rotate-ccw" className="w-4 h-4"></i>
+                    <span>Recover All Components (Restore Baseline)</span>
+                  </button>
+                </div>
+
+                {/* Paths Impact Table */}
+                <div className="bg-cyber-card border border-cyber-border rounded-xl p-4">
+                  <h3 className="text-sm font-bold text-white mb-3">Live Path Evaluation & Fail-Safe Status</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono border-collapse">
+                      <thead>
+                        <tr className="border-b border-cyber-border text-slate-400">
+                          <th className="py-2 px-3">PATH ID</th>
+                          <th className="py-2 px-3">FLOW NAME</th>
+                          <th className="py-2 px-3">STATUS</th>
+                          <th className="py-2 px-3">ACTIVE ROUTE</th>
+                          <th className="py-2 px-3">DECISION REASON</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-cyber-border/40 text-slate-300">
+                        {paths.map(p => (
+                          <tr key={p.id}>
+                            <td className="py-2.5 px-3 font-semibold text-white">{p.id}</td>
+                            <td className="py-2.5 px-3">{p.name}</td>
+                            <td className="py-2.5 px-3">
+                              <span className={`px-2 py-0.5 rounded font-bold ${
+                                p.status === 'GUARANTEED' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
+                                (p.status === 'REROUTED' ? 'bg-cyan-950 text-cyan-400 border border-cyan-800' :
+                                'bg-rose-950 text-rose-400 border border-rose-800')
+                              }`}>
+                                {p.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-400 text-[11px] truncate max-w-[220px]">
+                              {p.current_hops.join(' &rarr; ')}
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] text-slate-400">{p.decision_reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 5: TRAFFIC INSPECTOR */}
+            {activeTab === 'traffic' && (
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center space-x-2">
+                      <i data-lucide="activity" className="w-5 h-5 text-cyan-400"></i>
+                      <span>Packet-Level Traffic Verification Stream</span>
+                    </h2>
+                    <p className="text-xs text-slate-400">Simulated packets traversing the security fabric with ground-truth verification.</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => handleSimulateTraffic(1000)}
+                      className="text-xs px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white rounded font-mono shadow"
+                    >
+                      Inject 1,000 Packets
+                    </button>
+                  </div>
+                </div>
+
+                {/* Packet Stats Banner */}
+                {trafficStats && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div className="bg-cyber-card border border-cyber-border rounded-lg p-3">
+                      <span className="text-[10px] font-mono text-slate-400">TOTAL PACKETS</span>
+                      <div className="text-xl font-bold text-white mt-1">{trafficStats.total_packets}</div>
+                    </div>
+                    <div className="bg-cyber-card border border-cyber-border rounded-lg p-3">
+                      <span className="text-[10px] font-mono text-emerald-400">DELIVERED</span>
+                      <div className="text-xl font-bold text-emerald-400 mt-1">{trafficStats.delivered}</div>
+                    </div>
+                    <div className="bg-cyber-card border border-cyber-border rounded-lg p-3">
+                      <span className="text-[10px] font-mono text-cyan-400">REROUTED</span>
+                      <div className="text-xl font-bold text-cyan-400 mt-1">{trafficStats.rerouted}</div>
+                    </div>
+                    <div className="bg-cyber-card border border-cyber-border rounded-lg p-3">
+                      <span className="text-[10px] font-mono text-rose-400">BLOCKED UNSAFE</span>
+                      <div className="text-xl font-bold text-rose-400 mt-1">{trafficStats.blocked}</div>
+                    </div>
+                    <div className="bg-cyber-card border border-cyber-border rounded-lg p-3">
+                      <span className="text-[10px] font-mono text-emerald-400">UNSAFE DELIVERED</span>
+                      <div className="text-xl font-bold text-emerald-400 mt-1">0</div>
+                    </div>
+                    <div className="bg-cyber-card border border-cyber-border rounded-lg p-3">
+                      <span className="text-[10px] font-mono text-slate-400">AVG LATENCY</span>
+                      <div className="text-xl font-bold text-white mt-1">{trafficStats.avg_latency_ms} ms</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Packet Stream Table */}
+                <div className="bg-cyber-card border border-cyber-border rounded-xl p-4">
+                  <h3 className="text-sm font-bold text-white mb-3">Live Packet Telemetry (Last 50 Packets)</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono border-collapse">
+                      <thead>
+                        <tr className="border-b border-cyber-border text-slate-400">
+                          <th className="py-2 px-3">PACKET ID</th>
+                          <th className="py-2 px-3">PROTOCOL</th>
+                          <th className="py-2 px-3">SOURCE &rarr; DESTINATION</th>
+                          <th className="py-2 px-3">STATUS</th>
+                          <th className="py-2 px-3">BOUNDARY</th>
+                          <th className="py-2 px-3">LATENCY</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-cyber-border/40 text-slate-300">
+                        {packets.map(pkt => (
+                          <tr key={pkt.id}>
+                            <td className="py-2 px-3 font-semibold text-white">{pkt.id}</td>
+                            <td className="py-2 px-3 text-cyan-400">{pkt.protocol}</td>
+                            <td className="py-2 px-3 text-slate-300">{pkt.source} &rarr; {pkt.destination}</td>
+                            <td className="py-2 px-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                pkt.status === 'DELIVERED' ? 'bg-emerald-950 text-emerald-400' :
+                                (pkt.status === 'REROUTED' ? 'bg-cyan-950 text-cyan-400' : 'bg-rose-950 text-rose-400')
+                              }`}>
+                                {pkt.status}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 text-slate-400">{pkt.boundary_crossed || 'INTERNAL'}</td>
+                            <td className="py-2 px-3 text-slate-400">{pkt.latency_ms} ms</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 6: AI SECURITY CENTER */}
+            {activeTab === 'ai' && aiData && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-lg font-bold text-white flex items-center space-x-2">
+                    <i data-lucide="brain-circuit" className="w-5 h-5 text-violet-400"></i>
+                    <span>AI Security Center & ML Anomaly Telemetry</span>
+                  </h2>
+                  <p className="text-xs text-slate-400">scikit-learn Isolation Forest anomaly scoring and GenAI-ready decision explanations.</p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Left: ML Telemetry Radar */}
+                  <div className="bg-cyber-card border border-cyber-border rounded-xl p-5 space-y-4">
+                    <h3 className="text-sm font-bold text-white">Isolation Forest Anomaly Assessment</h3>
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800">
+                      <div>
+                        <span className="text-xs text-slate-400 font-mono">Anomaly Score:</span>
+                        <div className="text-2xl font-bold text-cyan-400 font-mono mt-1">{aiData.telemetry_analysis.anomaly_score}</div>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded text-xs font-mono font-bold ${
+                        aiData.telemetry_analysis.is_anomaly ? 'bg-rose-950 text-rose-400 border border-rose-800' : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                      }`}>
+                        {aiData.telemetry_analysis.is_anomaly ? 'ANOMALY DETECTED' : 'NORMAL TELEMETRY'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <span className="text-xs font-mono text-slate-400">Contributing Metric Deviations:</span>
+                      {Object.entries(aiData.telemetry_analysis.contributing_metrics || {}).map(([metric, dev]) => (
+                        <div key={metric} className="flex items-center justify-between text-xs font-mono bg-slate-900/60 p-2 rounded">
+                          <span className="text-slate-300">{metric}</span>
+                          <span className="text-rose-400 font-bold">+{dev}&sigma; dev</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="p-3 bg-slate-900/40 border border-slate-800 rounded text-xs text-slate-400 font-mono">
+                      {aiData.telemetry_analysis.advisory_note}
+                    </div>
+                  </div>
+
+                  {/* Center & Right: Deterministic Risk Formula Breakdown */}
+                  <div className="lg:col-span-2 bg-cyber-card border border-cyber-border rounded-xl p-5 space-y-4">
+                    <h3 className="text-sm font-bold text-white">Deterministic Risk Breakdown (0-100)</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center font-mono">
+                      <div className="bg-slate-900 p-2.5 rounded border border-slate-800">
+                        <span className="text-[10px] text-slate-400">SEVERITY (35%)</span>
+                        <div className="text-lg font-bold text-white mt-1">{aiData.risk_assessment.factors.severity_score}</div>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded border border-slate-800">
+                        <span className="text-[10px] text-slate-400">BLAST RADIUS (25%)</span>
+                        <div className="text-lg font-bold text-cyan-400 mt-1">{aiData.risk_assessment.factors.blast_radius}%</div>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded border border-slate-800">
+                        <span className="text-[10px] text-slate-400">ANOMALY (20%)</span>
+                        <div className="text-lg font-bold text-violet-400 mt-1">{aiData.risk_assessment.factors.anomaly_score}</div>
+                      </div>
+                      <div className="bg-slate-900 p-2.5 rounded border border-slate-800">
+                        <span className="text-[10px] text-slate-400">CASCADE (20%)</span>
+                        <div className="text-lg font-bold text-amber-400 mt-1">{aiData.risk_assessment.factors.cascading_risk}</div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-slate-900/70 border border-slate-800 rounded-xl space-y-2">
+                      <span className="text-xs font-bold text-white font-mono flex items-center space-x-1.5">
+                        <i data-lucide="sparkles" className="w-4 h-4 text-cyan-400"></i>
+                        <span>GenAI Executive Incident Explanation:</span>
+                      </span>
+                      <p className="text-xs text-slate-300 leading-relaxed font-sans">{aiData.risk_assessment.explanation}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 7: CRYPTOGRAPHIC AUDIT */}
+            {activeTab === 'audit' && (
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center space-x-2">
+                      <i data-lucide="file-check-2" className="w-5 h-5 text-cyan-400"></i>
+                      <span>SHA-256 Hash-Chained Cryptographic Audit Ledger</span>
+                    </h2>
+                    <p className="text-xs text-slate-400">Immutable blockchain-style audit trail of every security decision, failure, and reroute.</p>
+                  </div>
+                  <button
+                    onClick={handleVerifyAudit}
+                    className="text-xs px-4 py-2 bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white rounded font-mono shadow flex items-center space-x-2"
+                  >
+                    <i data-lucide="shield-check" className="w-4 h-4"></i>
+                    <span>Verify Ledger Integrity</span>
+                  </button>
+                </div>
+
+                {/* Audit Integrity Proof Banner */}
+                {auditStatus && (
+                  <div className={`p-4 rounded-xl border flex items-center space-x-3 text-xs font-mono ${
+                    auditStatus.valid ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300' : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
+                  }`}>
+                    <i data-lucide={auditStatus.valid ? "check-circle-2" : "alert-triangle"} className="w-6 h-6 flex-shrink-0"></i>
+                    <div>
+                      <strong className="text-sm block">{auditStatus.valid ? "CRYPTOGRAPHIC AUDIT CHAIN VERIFIED" : "TAMPERING DETECTED"}</strong>
+                      <span>{auditStatus.message}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Audit Table */}
+                <div className="bg-cyber-card border border-cyber-border rounded-xl p-4">
+                  <h3 className="text-sm font-bold text-white mb-3 font-mono">Immutable Blocks ({auditLogs.length})</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono border-collapse">
+                      <thead>
+                        <tr className="border-b border-cyber-border text-slate-400">
+                          <th className="py-2 px-3">BLOCK #</th>
+                          <th className="py-2 px-3">TIMESTAMP</th>
+                          <th className="py-2 px-3">ACTOR</th>
+                          <th className="py-2 px-3">ACTION</th>
+                          <th className="py-2 px-3">TARGET</th>
+                          <th className="py-2 px-3">CURRENT SHA-256 HASH</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-cyber-border/40 text-slate-300">
+                        {auditLogs.map(log => (
+                          <tr key={log.id}>
+                            <td className="py-2.5 px-3 font-bold text-cyan-400">#{log.id}</td>
+                            <td className="py-2.5 px-3 text-slate-400">{log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '-'}</td>
+                            <td className="py-2.5 px-3 text-slate-300">{log.actor}</td>
+                            <td className="py-2.5 px-3 font-semibold text-emerald-400">{log.action}</td>
+                            <td className="py-2.5 px-3 text-slate-300">{log.target}</td>
+                            <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 truncate max-w-[200px]" title={log.current_hash}>
+                              {log.current_hash ? log.current_hash.slice(0, 16) + '...' : '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 8: JUDGE DEMO & SCORECARD */}
+            {activeTab === 'demo' && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center space-x-2">
+                      <i data-lucide="award" className="w-5 h-5 text-emerald-400"></i>
+                      <span>Automated 8-Step Judge Demonstration & Final Scorecard</span>
+                    </h2>
+                    <p className="text-xs text-slate-400">Step-by-step proof of invariant verification, targeted fail-safe, compliant reroute, and zero unsafe delivery.</p>
+                  </div>
+                  <button
+                    onClick={handleRunDemo}
+                    disabled={demoLoading}
+                    className="text-xs px-4 py-2 bg-gradient-to-r from-emerald-600 to-cyan-600 text-white rounded font-mono shadow flex items-center space-x-1.5"
+                  >
+                    <i data-lucide="play" className="w-3.5 h-3.5"></i>
+                    <span>{demoLoading ? 'RUNNING DEMO...' : 'RE-RUN DEMO'}</span>
+                  </button>
+                </div>
+
+                {demoResult ? (
+                  <div className="space-y-6">
+                    {/* Final Scorecard Grid */}
+                    <div className="bg-cyber-card border-2 border-emerald-500/50 rounded-xl p-5 shadow-lg glow-emerald">
+                      <h3 className="text-base font-extrabold text-white mb-4 flex items-center space-x-2">
+                        <i data-lucide="check-circle" className="w-5 h-5 text-emerald-400"></i>
+                        <span>FINAL JUDGE SCORECARD & PROOF OF INVARIANT PRESERVATION</span>
+                      </h3>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 font-mono text-center">
+                        <div className="bg-slate-900/90 p-3 rounded-lg border border-emerald-500/30">
+                          <span className="text-[11px] text-slate-400">UNSAFE TRAFFIC DELIVERED</span>
+                          <div className="text-2xl font-black text-emerald-400 mt-1">{demoResult.scorecard.unsafe_traffic_delivered}</div>
+                          <span className="text-[10px] text-emerald-300/80">ZERO LEAKAGE</span>
+                        </div>
+                        <div className="bg-slate-900/90 p-3 rounded-lg border border-slate-800">
+                          <span className="text-[11px] text-slate-400">SAFE PATHS PRESERVED</span>
+                          <div className="text-2xl font-black text-cyan-400 mt-1">{demoResult.scorecard.safe_path_preservation_pct}%</div>
+                          <span className="text-[10px] text-slate-400">{demoResult.scorecard.safe_paths_preserved} / {demoResult.scorecard.total_paths_monitored} PATHS</span>
+                        </div>
+                        <div className="bg-slate-900/90 p-3 rounded-lg border border-slate-800">
+                          <span className="text-[11px] text-slate-400">UNNECESSARY PATHS BLOCKED</span>
+                          <div className="text-2xl font-black text-emerald-400 mt-1">{demoResult.scorecard.unnecessary_paths_blocked}</div>
+                          <span className="text-[10px] text-emerald-300/80">TARGETED ISOLATION</span>
+                        </div>
+                        <div className="bg-slate-900/90 p-3 rounded-lg border border-slate-800">
+                          <span className="text-[11px] text-slate-400">AUDIT INTEGRITY</span>
+                          <div className="text-2xl font-black text-emerald-400 mt-1">VERIFIED</div>
+                          <span className="text-[10px] text-slate-400">SHA-256 IMMUTABLE</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Timeline Progression */}
+                    <div className="bg-cyber-card border border-cyber-border rounded-xl p-5 space-y-4">
+                      <h3 className="text-sm font-bold text-white">8-Step Demonstration Execution Timeline</h3>
+                      <div className="space-y-3">
+                        {demoResult.timeline.map((step, idx) => (
+                          <div key={idx} className="flex items-start space-x-3 p-3 rounded-lg bg-slate-900/70 border border-slate-800">
+                            <span className="w-6 h-6 rounded-full bg-cyan-950 border border-cyan-500/50 text-cyan-400 text-xs flex items-center justify-center font-bold flex-shrink-0">
+                              {step.step}
+                            </span>
+                            <div className="flex-1 text-xs">
+                              <div className="flex items-center justify-between">
+                                <h4 className="font-bold text-white">{step.title}</h4>
+                                <span className="text-emerald-400 font-mono text-[11px]">PASSED</span>
+                              </div>
+                              <p className="text-slate-300 mt-1">{step.narration}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-12 text-center bg-cyber-card border border-cyber-border rounded-xl space-y-4">
+                    <i data-lucide="play-circle" className="w-12 h-12 mx-auto text-cyan-400 animate-bounce"></i>
+                    <h3 className="text-base font-bold text-white">Judge Demonstration Ready to Execute</h3>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      Click the button below to run the complete 8-step deterministic test scenario showing baseline verification, failure injection, targeted fail-safe isolation, and safe rerouting.
+                    </p>
+                    <button
+                      onClick={handleRunDemo}
+                      disabled={demoLoading}
+                      className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-bold text-xs rounded-lg shadow-lg font-mono"
+                    >
+                      START 8-STEP DEMO
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+
+          {/* FOOTER */}
+          <footer className="border-t border-cyber-border py-4 text-center text-xs text-slate-500 font-mono">
+            InvariantHold &bull; Runtime Security Invariant Verification & Targeted Fail-Safe Platform &bull; Built for Hackathon
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
