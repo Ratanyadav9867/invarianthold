@@ -122,7 +122,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   ];
 
   return (
-    <aside className="w-full md:w-72 bg-white border-r border-slate-200 shadow-sm flex flex-col justify-between shrink-0 min-h-screen sticky top-0 z-30 font-sans text-slate-800">
+    <aside className="w-full md:w-72 bg-white border-r border-slate-200 shadow-sm flex flex-col justify-between shrink-0 min-h-screen sticky top-0 z-30" style={{ fontFamily: "'Inter', ui-sans-serif, system-ui, sans-serif" }}>
       {/* Top Header Section */}
       <div className="p-4 sm:p-5 flex flex-col space-y-4">
         {/* Brand Header */}
@@ -135,8 +135,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
           <div>
             <div className="flex items-center space-x-1.5">
-              <span className="font-extrabold text-base tracking-tight text-slate-900 font-mono">
-                INVARIANT<span className="text-indigo-600">HOLD</span>
+              <span className="font-extrabold text-base tracking-tight text-slate-900">
+                Invariant<span className="text-indigo-600">Hold</span>
               </span>
               <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 font-mono font-bold">
                 v1.0
@@ -243,10 +243,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition text-left ${
+                className={`flex items-center justify-between px-3 py-2 rounded-xl text-[13px] font-medium transition text-left ${
                   isActive
-                    ? 'bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-transparent'
+                    ? 'bg-indigo-50 border border-indigo-200 text-indigo-700 font-semibold shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50 border border-transparent'
                 }`}
               >
                 <div className="flex items-center space-x-2.5">
@@ -257,10 +257,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
                 {tab.badge && (
                   <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold font-mono ${
                       isActive
-                        ? 'bg-indigo-200/70 text-indigo-900'
-                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                        ? 'bg-indigo-100 text-indigo-800'
+                        : 'bg-slate-100 text-slate-500 border border-slate-200'
                     }`}
                   >
                     {tab.badge}

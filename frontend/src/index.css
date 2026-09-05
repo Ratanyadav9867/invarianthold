@@ -3,29 +3,94 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
   body {
     margin: 0;
-    background-color: #F8FAFC;
+    background-color: #F0F4F8;
     color: #0F172A;
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    letter-spacing: -0.011em;
+  }
+
+  /* Apply JetBrains Mono globally to all monospace elements */
+  .font-mono, code, pre, kbd, samp {
+    font-family: var(--font-mono) !important;
+    letter-spacing: -0.025em;
   }
 }
 
-/* Hide scrollbars / sliders across browsers */
-*::-webkit-scrollbar {
-  width: 0px;
-  height: 0px;
-  background: transparent;
-}
-* {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+/* ─── Hide scrollbars ─────────────────────────────────────── */
+*::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
+* { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ─── Glassmorphism utility ───────────────────────────────── */
+.glass {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
+/* ─── Premium card shadow ─────────────────────────────────── */
+.card-shadow {
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06),
+              0 4px 16px rgba(15, 23, 42, 0.06),
+              0 0 0 1px rgba(148, 163, 184, 0.08);
 }
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+
+/* ─── Animated gradient shimmer ──────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
 }
+.shimmer {
+  background: linear-gradient(90deg, transparent 25%, rgba(99,102,241,0.08) 50%, transparent 75%);
+  background-size: 200% auto;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* ─── Pulse ring for active/anomaly nodes ─────────────────── */
+@keyframes pulseRing {
+  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }
+  70%  { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+.pulse-ring { animation: pulseRing 1.8s ease-in-out infinite; }
+
+/* ─── Traffic flow dot animation along SVG path ───────────── */
+@keyframes flowDot {
+  0%   { stroke-dashoffset: 100; }
+  100% { stroke-dashoffset: 0; }
+}
+.flow-line {
+  stroke-dasharray: 6 6;
+  animation: flowDot 1.2s linear infinite;
+}
+.flow-line-safe   { stroke: #10B981; }
+.flow-line-rerouted { stroke: #0EA5E9; }
+.flow-line-blocked { stroke: #EF4444; }
+.flow-line-neutral { stroke: #94A3B8; }
+
+/* ─── Fade-in toast ───────────────────────────────────────── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn { animation: fadeInUp 0.25s ease-out both; }
+
+/* ─── Selection colors ─────────────────────────────────────── */
+::selection { background: #6366F1; color: #fff; }

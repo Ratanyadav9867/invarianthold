@@ -222,7 +222,7 @@ function AppContent() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col md:flex-row font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-[#F0F4F8] text-slate-900 flex flex-col md:flex-row selection:bg-indigo-500 selection:text-white" style={{ fontFamily: "'Inter', ui-sans-serif, system-ui, sans-serif" }}>
       {/* Left Grid Sidebar Navigation */}
       <Navbar
         activeTab={activeTab}
@@ -371,11 +371,11 @@ function AppContent() {
       </main>
 
         {/* Global Footer */}
-        <footer className="border-t border-slate-200 py-4 text-center text-xs text-slate-500 font-mono bg-white mt-auto">
+        <footer className="border-t border-slate-200 py-4 text-center text-[13px] text-slate-500 bg-white mt-auto" style={{ fontFamily: "'Inter', ui-sans-serif, sans-serif" }}>
           <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-            <span>InvariantHold &bull; Runtime Security Invariant Verification &amp; Targeted Fail-Safe Platform</span>
-            <span className="text-[11px] text-slate-400">
-              Mathematical Invariant Authority &bull; scikit-learn Isolation Forest &bull; SHA-256 Audit Chain
+            <span className="font-medium">InvariantHold &bull; Runtime Security Invariant Verification &amp; Targeted Fail-Safe Platform</span>
+            <span className="text-[12px] text-slate-400 font-mono">
+              Formal Invariants &bull; IsolationForest &bull; SHA-256 Audit Chain
             </span>
           </div>
         </footer>
