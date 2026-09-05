@@ -1,3 +1,4 @@
+import os
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -9,6 +10,9 @@ from app.models.traffic import TrafficPacket, Incident, AnomalyRecord
 from app.models.audit import AuditLog
 from app.models.auth import User
 from app.core.topology_seed import seed_database
+
+# Enable CSRF bypass for the test suite (TestClient cannot share cookies across threads)
+os.environ.setdefault("TESTING", "true")
 
 @pytest.fixture(scope="function")
 def db_session():

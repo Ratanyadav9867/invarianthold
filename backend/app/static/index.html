@@ -242,14 +242,27 @@
         return null;
       };
 
+      // Read CSRF token from cookie (set by server on first GET response)
+      const getCsrfToken = () => {
+        const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        return match ? decodeURIComponent(match[1]) : null;
+      };
+
       const authFetch = async (url, options = {}) => {
         let token = authToken;
         if (!token) {
           token = await loginAsRole(currentRole);
         }
+        const method = (options.method || 'GET').toUpperCase();
+        const csrfHeaders = {};
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+          const csrfToken = getCsrfToken();
+          if (csrfToken) csrfHeaders['X-CSRF-Token'] = csrfToken;
+        }
         const headers = {
           ...(options.headers || {}),
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          ...csrfHeaders,
         };
         const res = await fetch(url, { ...options, headers });
         if (res.status === 403) {

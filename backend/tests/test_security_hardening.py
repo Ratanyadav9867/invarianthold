@@ -366,7 +366,56 @@ def test_security_headers_present():
     """All HTTP responses must include defense-in-depth security headers."""
     r = client.get("/health")
     assert r.status_code == 200
+    # Basic hardening headers
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert r.headers.get("Referrer-Policy") == "no-referrer"
     assert "X-XSS-Protection" in r.headers
+    # Content-Security-Policy: must be present and restrict to self
+    csp = r.headers.get("Content-Security-Policy", "")
+    assert "default-src 'self'" in csp, f"CSP missing or weak: {csp}"
+    assert "frame-ancestors 'none'" in csp, f"CSP must block framing: {csp}"
+    # HSTS: must be present (honoured by browsers once deployed over HTTPS)
+    hsts = r.headers.get("Strict-Transport-Security", "")
+    assert "max-age=" in hsts, f"HSTS header missing: {hsts}"
+    # Permissions-Policy: must disable dangerous browser features
+    pp = r.headers.get("Permissions-Policy", "")
+    assert "geolocation=()" in pp, f"Permissions-Policy missing geolocation restriction: {pp}"
+
+
+def test_csrf_protection_on_post_endpoints():
+    """State-changing endpoints must reject POSTs without a valid CSRF token."""
+    import os
+    # Temporarily disable TESTING bypass so CSRF middleware actually enforces
+    original = os.environ.get("TESTING", "true")
+    os.environ["TESTING"] = "false"
+    try:
+        # POST without CSRF token or cookie should get 403 (CSRF check runs before auth)
+        r = client.post("/api/audit/verify", json={})
+        assert r.status_code == 403, f"Expected CSRF 403, got {r.status_code}: {r.text}"
+        assert "CSRF" in r.json().get("detail", ""), f"Expected CSRF message, got: {r.json()}"
+
+        # POST with matching CSRF cookie + header should pass CSRF check
+        csrf_val = "test_csrf_token_abc123secure"
+        client.cookies.set("csrf_token", csrf_val)
+        r2 = client.post(
+            "/api/audit/verify",
+            json={},
+            headers={"X-CSRF-Token": csrf_val}
+        )
+        # CSRF passes — now auth check kicks in (401), not CSRF block (403)
+        assert r2.status_code in (200, 401, 422), (
+            f"CSRF-valid request should not be CSRF-blocked, got {r2.status_code}: {r2.text}"
+        )
+        # Mismatched token must still be rejected
+        r3 = client.post(
+            "/api/audit/verify",
+            json={},
+            headers={"X-CSRF-Token": "wrong_token"}
+        )
+        assert r3.status_code == 403
+        assert "mismatch" in r3.json().get("detail", "").lower()
+    finally:
+        os.environ["TESTING"] = original
+        client.cookies.clear()
+
