@@ -49,18 +49,29 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "InvariantHold"
     VERSION: str = "1.0.0"
     DATABASE_URL: str = "sqlite:///./invarianthold.db"
-    SECRET_KEY: str = "REDACTED_SECRET_KEY"
+    SECRET_KEY: Optional[str] = None
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     DEFAULT_PACKET_COUNT: int = 1000
     ADMIN_USER: str = "admin@invarianthold.io"
-    ADMIN_PASSWORD: str = "REDACTED_PASSWORD"
+    ADMIN_PASSWORD: Optional[str] = None
     ANALYST_USER: str = "analyst@invarianthold.io"
-    ANALYST_PASSWORD: str = "REDACTED_PASSWORD"
+    ANALYST_PASSWORD: Optional[str] = None
     VIEWER_USER: str = "viewer@invarianthold.io"
-    VIEWER_PASSWORD: str = "REDACTED_PASSWORD"
+    VIEWER_PASSWORD: Optional[str] = None
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.SECRET_KEY:
+            self.SECRET_KEY = secrets.token_hex(32)
+        if not self.ADMIN_PASSWORD:
+            self.ADMIN_PASSWORD = secrets.token_urlsafe(12)
+        if not self.ANALYST_PASSWORD:
+            self.ANALYST_PASSWORD = secrets.token_urlsafe(12)
+        if not self.VIEWER_PASSWORD:
+            self.VIEWER_PASSWORD = secrets.token_urlsafe(12)
 
 settings = Settings()
 

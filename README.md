@@ -18,14 +18,15 @@ Traditional security platforms respond with one of two extremes:
 
 ## 2. The InvariantHold Solution
 
-**InvariantHold** provides mathematical, path-level security invariant verification:
+**InvariantHold** provides deterministic path-level security invariant verification:
 1. **Deterministic Invariant Engine (Source of Truth)**: Evaluates whether all required security controls for an invariant are present and operational on each specific traffic path.
 2. **Targeted Fail-Safe**: Isolates *only* the affected unsafe paths (e.g. 3 PCI paths blocked), while keeping unrelated safe traffic (e.g. 7 web and database paths, 70.0%) operational.
-3. **Safe Rerouting**: Discovers alternate candidate paths (e.g. redundant `ENC-02`) and verifies that the invariant is `GUARANTEED` *before* migrating traffic.
+3. **Safe Rerouting**: Discovers alternate candidate paths (e.g. redundant `ENC-02`) and verifies that the candidate route is `GUARANTEED` *before* migrating traffic. Candidate paths with `NO_POLICY`, `VIOLATED`, `BLOCKED`, or `AT_RISK` are strictly rejected.
 4. **Ground-Truth Traffic Verification**: Injects configurable virtual packet flows (100 to 1,000+ packets) to prove the central safety assertion:
    $$\text{unsafe\_traffic\_delivered} == 0$$
-5. **Advisory ML Anomaly Detection**: `scikit-learn` Isolation Forest detects failure bursts and telemetry spikes to assist SecOps risk scoring without ever overriding deterministic security proofs.
-6. **Immutable Cryptographic Audit Ledger**: SHA-256 blockchain-style hash-chaining records every decision and provides automated tamper detection.
+   Unsafe traffic delivery is dynamically computed from actual packet delivery outcomes, never hardcoded.
+5. **Advisory ML Anomaly Detection**: `scikit-learn` Isolation Forest detects failure bursts and telemetry spikes to assist SecOps risk scoring without ever overriding deterministic security decisions.
+6. **Tamper-Evident SHA-256 Hash-Chained Audit Ledger**: Cryptographic hash chaining records every administrative mutation and security decision with automated tamper detection.
 
 ---
 
@@ -34,106 +35,118 @@ Traditional security platforms respond with one of two extremes:
 ```mermaid
 flowchart TD
     subgraph Client Tier
-        UI[Dark Cyber SOC Dashboard]
-        API_DOCS[FastAPI Swagger / OpenAPI]
+        UI[Unified Cyber SOC Dashboard :8000]
+        API_STUDIO[Integrated API Studio]
     end
 
-    subgraph Service Layer
+    subgraph Security Gateway & RBAC
+        AUTH[JWT Verification HS256]
+        RBAC[Server-Side RBAC: ADMIN / ANALYST / VIEWER]
+        HEADERS[Security Headers & Sanitized Errors]
+    end
+
+    subgraph Deterministic Core Layer
         FE[Failure Injection Studio] --> GE[NetworkX Graph Engine]
-        GE --> IE[Invariant Verification Engine - SOURCE OF TRUTH]
-        IE --> FS{Is Invariant Guaranteed?}
-        FS -- YES --> ALLOW[Allow Safe Traffic Path]
-        FS -- NO --> TFS[Targeted Fail-Safe: Isolate Unsafe Path Only]
+        GE --> IE[Invariant Verification Engine - FINAL SOURCE OF TRUTH]
+        IE --> FS{Invariant Verdict?}
+        FS -- GUARANTEED --> ALLOW[Allow Safe Traffic Path]
+        FS -- NO_POLICY / VIOLATED --> TFS[Targeted Fail-Safe: Isolate Unsafe Path Only]
         TFS --> RE[Safe Rerouting Engine]
-        RE --> ALT{Compliant Route Found?}
-        ALT -- YES --> PRE_VERIFY[Pre-Verify Invariant on Route]
-        PRE_VERIFY -- GUARANTEED --> MIGRATE[Migrate to Alternate Route ENC-02]
-        PRE_VERIFY -- VIOLATED --> BLOCK[Preserve Path Isolation BLOCKED]
-        ALT -- NO --> BLOCK
+        RE --> ALT{Alternate Route Evaluated}
+        ALT -- GUARANTEED --> MIGRATE[Migrate to Pre-Verified Route ENC-02]
+        ALT -- REJECTED --> BLOCK[Maintain Path Isolation BLOCKED]
         ALLOW --> TE[Simulated Traffic Engine]
         MIGRATE --> TE
         BLOCK --> TE
-        TE --> ASSERT["SAFETY ASSERTION: unsafe_traffic_delivered == 0"]
-        ASSERT --> AL[SHA-256 Hash-Chained Audit Ledger]
+        TE --> ASSERT["SAFETY PROOF: unsafe_traffic_delivered == 0"]
+        ASSERT --> AL[Tamper-Evident SHA-256 Audit Ledger]
     end
 
-    subgraph Advisory & Intelligence
+    subgraph Advisory & Intelligence (Zero Invariant Authority)
         ML[scikit-learn Isolation Forest Anomaly Detector]
         RISK[Deterministic 0-100 Risk Scoring Engine]
-        EXPLAIN[Structured Explainability & GenAI Fallback]
+        EXPLAIN[Structured Decision Explainability & GenAI]
     end
 
-    Client Tier --> Service Layer
-    Service Layer --> Advisory & Intelligence
+    Client Tier --> Security Gateway & RBAC
+    Security Gateway & RBAC --> Deterministic Core Layer
+    Deterministic Core Layer --> Advisory & Intelligence
 ```
 
 ---
 
-## 4. Quickstart Guide (Local Execution)
+## 4. Invariant Engine Semantics
+
+The platform enforces strict deterministic invariant statuses:
+
+| Status | Meaning | Reroute Eligible? |
+|---|---|:---:|
+| **`GUARANTEED`** | All required security controls are verified present and healthy on the path. | ✅ YES |
+| **`AT_RISK`** | Invariant controls are present but components are in degraded health. | ❌ NO |
+| **`VIOLATED`** | One or more required security controls are missing or failed. | ❌ NO |
+| **`BLOCKED`** | Path has been intentionally isolated by targeted fail-safe enforcement. | ❌ NO |
+| **`NO_POLICY`** | No security invariant is configured for this path (**NO POLICY ≠ GUARANTEED**). | ❌ NO |
+
+---
+
+## 5. Role-Based Access Control (RBAC)
+
+Authorization is enforced strictly on the server side:
+
+| Role | Permissions | Mutation Access |
+|---|---|:---:|
+| **`ADMIN`** | Full access: configuration, failure injection, rerouting, component recovery, simulation, and environment reset. | ✅ Full |
+| **`SECURITY_ANALYST`** | Operational access: failure injection, rerouting, component recovery, simulation, and judge demo execution. | ✅ Operations |
+| **`VIEWER`** | Read-only access: inspect topology, invariants, traffic, audit logs, and system telemetry. All mutations return `403 Forbidden`. | ❌ Read-Only |
+
+---
+
+## 6. Demo Credentials (DEMO ONLY — NOT FOR PRODUCTION)
+
+> [!WARNING]
+> The credentials below are provided exclusively for hackathon evaluation and local testing. In production, configure all credentials and signing keys via environment variables or `.env`.
+
+| Role | Username / Email | Demo Password | Purpose |
+|---|---|---|---|
+| **ADMIN** | `admin@invarianthold.io` | Configured in `.env` | Full administrative operations & reset |
+| **SECURITY_ANALYST** | `analyst@invarianthold.io` | Configured in `.env` | Security operations & failure injection |
+| **VIEWER** | `viewer@invarianthold.io` | Configured in `.env` | Read-only evaluation of RBAC barriers |
+
+---
+
+## 7. Quickstart Guide (Local Execution)
 
 ### Prerequisites
-- Python 3.10+ (Python 3.13 tested and verified)
+- Python 3.10+ (Python 3.11, 3.12, 3.13 supported)
 - Windows / Linux / macOS
 
-### 1. Clone or Open Project
+### 1. Set Up Virtual Environment & Dependencies
 ```powershell
-cd C:\Users\R\.gemini\antigravity\scratch\invarianthold
-```
-
-### 2. Activate Virtual Environment & Install Dependencies
-```powershell
+python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-### 3. Run Automated Acceptance Tests (100% Pass Rate)
+### 2. Configure Environment
+```powershell
+cp .env.example .env
+```
+*(In development, an ephemeral `SECRET_KEY` and random demo credentials will be generated automatically if `.env` is omitted).*
+
+### 3. Run the Automated Test Suite
 ```powershell
 pytest -v
 ```
 
-### 4. Launch InvariantHold Unified Server
+### 4. Launch the Unified Platform
 ```powershell
 python run.py
 ```
-
-Open your browser to:
-- **Interactive SOC Dashboard**: [http://localhost:8000](http://localhost:8000)
-- **Interactive REST API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Health Check Endpoint**: [http://localhost:8000/health](http://localhost:8000/health)
+Open **[http://localhost:8000](http://localhost:8000)** in your browser for the full Cyber SOC Dashboard, Interactive Topology, built-in API Studio, and 8-Step Judge Showcase.
 
 ---
 
-## 5. Demo Credentials (RBAC)
-
-| Role | Username / Email | Default Password | Permissions |
-|---|---|---|---|
-| **ADMIN** | `admin@invarianthold.io` | `REDACTED_PASSWORD` | Full administrative control, scenario execution, ledger reset |
-| **SECURITY_ANALYST** | `analyst@invarianthold.io` | `REDACTED_PASSWORD` | Failure simulation, rerouting, incident triage |
-| **VIEWER** | `viewer@invarianthold.io` | `REDACTED_PASSWORD` | Read-only dashboards and audit log inspection |
-
----
-
-## 6. Judge Verification Scorecard
-
-The platform includes a 1-click **Judge Demo Mode** that runs an automated 8-step test scenario. Click the **"RUN JUDGE DEMO"** button on the UI header or trigger via API:
-
-```powershell
-curl -X POST "http://localhost:8000/api/demo/run?packet_count=1000"
-```
-
-### Final Scorecard Guarantees:
-- **Security Invariants Guaranteed**: `YES`
-- **Unsafe Traffic Delivered**: `0`
-- **Unnecessary Paths Blocked**: `0` (Zero collateral disruption)
-- **Safe Path Preservation**: `70.0%` dynamically calculated during `ENC-01` failure
-- **Rerouting Verification**: Traffic migrated to `ENC-02` only after pre-verification confirmed `GUARANTEED`
-- **Audit Integrity**: `VERIFIED` across all SHA-256 cryptographic blocks
-
----
-
-## 7. Project Documentation
-
-Detailed technical manuals are located in `/docs`:
-- [`architecture.md`](docs/architecture.md): Full pipeline, component separation of concerns, and data flows.
-- [`invariants.md`](docs/invariants.md): Mathematical invariant formulations and default fintech invariants.
-- [`demo.md`](docs/demo.md): Judge demonstration sequence diagram and step-by-step narration.
+## 8. Security Limitations & Production Considerations
+- **Storage**: Default deployment uses SQLite 3 with WAL mode and synchronous writes. For enterprise multi-region deployments, configure PostgreSQL.
+- **Audit Immutability**: The SHA-256 hash chain is tamper-evident (detects any row modification, payload tampering, or link breaking). It detects tampering within the database; for append-only guarantees at the storage layer, replicate hashes to external immutable storage (e.g. AWS S3 Object Lock or CloudWatch).
+- **Advisory ML**: Isolation Forest anomaly scores provide situational awareness for SecOps analysts and contribute to composite risk scoring; they never override deterministic invariant verification.

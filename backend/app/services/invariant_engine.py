@@ -41,7 +41,7 @@ class InvariantEngine:
                 "path_id": path.id,
                 "verdict": "NO_POLICY",
                 "invariant_id": None,
-                "invariant_name": "No Invariant Applied",
+                "invariant_name": "No Invariant Configured",
                 "required_controls": [],
                 "present_controls": [],
                 "missing_controls": [],

@@ -42,14 +42,15 @@ class ReroutingEngine:
 
         for candidate in candidates:
             eval_res = InvariantEngine.verify_path(db, path, graph_engine, hops=candidate)
-            if eval_res["verdict"] == "GUARANTEED":
+            verdict = eval_res.get("verdict")
+            if verdict == "GUARANTEED":
                 accepted_route = candidate
                 break
             else:
                 rejection_reasons.append({
                     "candidate_hops": candidate,
-                    "verdict": eval_res["verdict"],
-                    "reason": eval_res["reason"]
+                    "verdict": verdict,
+                    "reason": eval_res.get("reason", f"Candidate rejected with status {verdict}")
                 })
 
         now = datetime.datetime.now(datetime.UTC)
