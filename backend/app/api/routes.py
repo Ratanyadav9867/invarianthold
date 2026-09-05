@@ -193,7 +193,7 @@ def get_ai_anomalies(scenario: str = Query(default="NORMAL"), db: Session = Depe
     }
 
 @router.post("/ai/explain")
-def explain_decision(req: ExplainRequest, db: Session = Depends(get_db)):
+def explain_decision(req: ExplainRequest, db: Session = Depends(get_db), user: User = Depends(require_auth)):
     if req.path_id:
         risk = RiskEngine.calculate_risk(db)
         return ExplainEngine.explain_path_decision(db, req.path_id, risk_score=risk["risk_score"])
