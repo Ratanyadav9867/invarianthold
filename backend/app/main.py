@@ -33,18 +33,17 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-XSS-Protection"] = "1; mode=block"
-    # Content-Security-Policy: locks down resource loading to same origin only
+    # Content-Security-Policy — allow CDN sources the frontend requires
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+        "https://cdn.tailwindcss.com https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://unpkg.com; "
         "img-src 'self' data:; "
-        "font-src 'self' data:; "
+        "font-src 'self' data: https://unpkg.com; "
         "connect-src 'self'; "
         "frame-ancestors 'none';"
     )
-    # HSTS: tells browsers to always use HTTPS (honoured once deployed behind TLS)
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     # Permissions-Policy: disable dangerous browser features
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response

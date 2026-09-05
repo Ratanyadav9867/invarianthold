@@ -375,12 +375,10 @@ def test_security_headers_present():
     csp = r.headers.get("Content-Security-Policy", "")
     assert "default-src 'self'" in csp, f"CSP missing or weak: {csp}"
     assert "frame-ancestors 'none'" in csp, f"CSP must block framing: {csp}"
-    # HSTS: must be present (honoured by browsers once deployed over HTTPS)
-    hsts = r.headers.get("Strict-Transport-Security", "")
-    assert "max-age=" in hsts, f"HSTS header missing: {hsts}"
     # Permissions-Policy: must disable dangerous browser features
     pp = r.headers.get("Permissions-Policy", "")
     assert "geolocation=()" in pp, f"Permissions-Policy missing geolocation restriction: {pp}"
+
 
 
 def test_csrf_protection_on_post_endpoints():

@@ -215,9 +215,9 @@
       const [rbacAlert, setRbacAlert] = useState(null);
 
       const ROLE_CREDS = {
-        ADMIN: { username: 'admin', password: 'ratan9867@yadav' },
-        SECURITY_ANALYST: { username: 'analyst', password: 'ratan9867@yadav' },
-        VIEWER: { username: 'viewer', password: 'ratan9867@yadav' }
+        ADMIN: { username: 'admin@invarianthold.io', password: 'ratan9867@yadav' },
+        SECURITY_ANALYST: { username: 'analyst@invarianthold.io', password: 'ratan9867@yadav' },
+        VIEWER: { username: 'viewer@invarianthold.io', password: 'ratan9867@yadav' }
       };
 
       const loginAsRole = async (role) => {
@@ -235,6 +235,8 @@
             setRbacAlert(null);
             setLastActionMsg(`Authenticated as ${role} (${creds.username}). Server-side RBAC session active.`);
             return data.access_token;
+          } else {
+            console.warn(`Login failed for role ${role}: HTTP ${res.status}`);
           }
         } catch (e) {
           console.error("Login failed:", e);
@@ -272,15 +274,10 @@
           audioSynth.playAlert();
           throw new Error(msg);
         }
-        if (res.status === 401) {
-          const newToken = await loginAsRole(currentRole);
-          if (newToken) {
-            headers['Authorization'] = `Bearer ${newToken}`;
-            return fetch(url, { ...options, headers });
-          }
-        }
+        // On 401 — do NOT retry login (would trigger rate limiter). Just return the response.
         return res;
       };
+
 
       // Built-in API Studio State (Replaces separate /docs)
       const [apiEndpoint, setApiEndpoint] = useState('/traffic/simulate');
@@ -294,24 +291,34 @@
       const refreshData = async () => {
         try {
           const t0 = performance.now();
+
+          // Safe fetch helper — returns null instead of crashing on non-200
+          const safeFetch = async (url, opts) => {
+            try {
+              const r = await authFetch(url, opts);
+              if (!r || !r.ok) return null;
+              return await r.json();
+            } catch (e) { return null; }
+          };
+
           const [compRes, invRes, pathRes, statsRes, aiRes, auditRes, healthRes] = await Promise.all([
-            authFetch(`${API_BASE}/components`).then(r => r.json()),
-            authFetch(`${API_BASE}/invariants`).then(r => r.json()),
-            authFetch(`${API_BASE}/paths`).then(r => r.json()),
-            authFetch(`${API_BASE}/traffic/stats`).then(r => r.json()),
-            authFetch(`${API_BASE}/ai/anomalies`).then(r => r.json()),
-            authFetch(`${API_BASE}/audit?limit=25`).then(r => r.json()),
+            safeFetch(`${API_BASE}/components`),
+            safeFetch(`${API_BASE}/invariants`),
+            safeFetch(`${API_BASE}/paths`),
+            safeFetch(`${API_BASE}/traffic/stats`),
+            safeFetch(`${API_BASE}/ai/anomalies`),
+            safeFetch(`${API_BASE}/audit?limit=25`),
             fetch(`/health`).then(r => r.json()).catch(() => ({ status: 'ONLINE' }))
           ]);
           const t1 = performance.now();
-          
+
           setComponents(compRes || []);
           setInvariants(invRes || []);
           setPaths(pathRes || []);
           setTrafficStats(statsRes || null);
           setAiData(aiRes || null);
           setAuditLogs(auditRes || []);
-          setHealthStatus({ ...healthRes, latencyMs: Math.round(t1 - t0) });
+          setHealthStatus({ ...(healthRes || {}), latencyMs: Math.round(t1 - t0) });
         } catch (err) {
           console.error("API refresh error:", err);
         }
@@ -320,6 +327,7 @@
       const fetchPackets = async () => {
         try {
           const res = await authFetch(`${API_BASE}/traffic?limit=30`);
+          if (!res || !res.ok) return;
           const data = await res.json();
           setPackets(data || []);
         } catch (e) {}
