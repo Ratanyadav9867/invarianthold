@@ -19,25 +19,44 @@ InvariantHold introduces **Path-Level Deterministic Invariant Verification**:
 
 ```mermaid
 flowchart TD
-    A[Component Failure Detected] --> B[Path Impact Analysis]
-    B --> C[Invariant Verification Engine]
-    C --> D{Is Invariant Guaranteed?}
-    D -- YES --> E[Allow Traffic On Path]
-    D -- NO --> F[Engage Targeted Fail-Safe]
-    F --> G[Search Candidate Alternate Paths]
-    G --> H{Alternate Found?}
-    H -- NO --> I[Block Only Affected Path]
-    H -- YES --> J[Pre-Verify Invariant on Candidate Route]
-    J --> K{Guaranteed?}
-    K -- YES --> L[Migrate Traffic to Alternate Route]
-    K -- NO --> I
-    I --> M[Simulated Traffic Verification]
-    L --> M
-    M --> N[Assert: unsafe_traffic_delivered == 0]
-    N --> O[Append Cryptographic SHA-256 Audit Record]
-```
+    subgraph client["Client Tier"]
+        UI[Unified Cyber SOC Dashboard :8000]
+        API_STUDIO[Integrated API Studio]
+    end
 
----
+    subgraph gateway["Security Gateway & RBAC"]
+        AUTH[JWT Verification HS256]
+        RBAC[Server-Side RBAC: ADMIN / ANALYST / VIEWER]
+        HEADERS[Security Headers & Sanitized Errors]
+    end
+
+    subgraph core["Deterministic Core Layer"]
+        FE[Failure Injection Studio] --> GE[NetworkX Graph Engine]
+        GE --> IE[Invariant Verification Engine - FINAL SOURCE OF TRUTH]
+        IE --> FS{Invariant Verdict?}
+        FS -- GUARANTEED --> ALLOW[Allow Safe Traffic Path]
+        FS -- NO_POLICY / VIOLATED --> TFS[Targeted Fail-Safe: Isolate Unsafe Path Only]
+        TFS --> RE[Safe Rerouting Engine]
+        RE --> ALT{Alternate Route Evaluated}
+        ALT -- GUARANTEED --> MIGRATE[Migrate to Pre-Verified Route ENC-02]
+        ALT -- REJECTED --> BLOCK[Maintain Path Isolation BLOCKED]
+        ALLOW --> TE[Simulated Traffic Engine]
+        MIGRATE --> TE
+        BLOCK --> TE
+        TE --> ASSERT["SAFETY PROOF: unsafe_traffic_delivered == 0"]
+        ASSERT --> AL[Tamper-Evident SHA-256 Audit Ledger]
+    end
+
+    subgraph advisory["Advisory & Intelligence (Zero Invariant Authority)"]
+        ML[scikit-learn Isolation Forest Anomaly Detector]
+        RISK[Deterministic 0-100 Risk Scoring Engine]
+        EXPLAIN[Structured Decision Explainability & GenAI]
+    end
+
+    client --> gateway
+    gateway --> core
+    core --> advisory
+```
 
 ## 3. Technology Stack & Separation of Concerns
 
