@@ -477,7 +477,7 @@ class GraphEngine:
         return dmap
 
     def find_candidate_alternate_paths(self, db: Session, path: TrafficPath, cutoff: int = 8) -> list[list[str]]:
-                try:
+        try:
             all_paths = list(nx.all_simple_paths(self.graph, source=path.source_node, target=path.destination_node, cutoff=cutoff))
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             all_paths = []

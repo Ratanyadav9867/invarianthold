@@ -1,5 +1,12 @@
 from contextlib import asynccontextmanager
 import os
+import secrets
+import logging
+import hmac
+import secrets
+
+logger = logging.getLogger(__name__)
+
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -105,7 +112,7 @@ async def csrf_protection(request: Request, call_next):
             status_code=403,
             content={"detail": "CSRF token missing. Include X-CSRF-Token header matching csrf_token cookie."}
         )
-    if not secrets.compare_digest(cookie_token, header_token):
+    if not hmac.compare_digest(cookie_token, header_token):
         return JSONResponse(
             status_code=403,
             content={"detail": "CSRF token mismatch. Request rejected."}

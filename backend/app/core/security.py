@@ -5,6 +5,7 @@ from typing import Any,Dict,List
 import bcrypt
 import jwt
 from app.config import settings
+from fastapi import HTTPException, status
 from jwt import PyJWTError
 
 

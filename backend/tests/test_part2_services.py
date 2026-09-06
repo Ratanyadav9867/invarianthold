@@ -136,21 +136,6 @@ def test_api_endpoints_live():
         assert r.json()["status"] == "HEALTHY"
         assert "subsystems" in r.json()
 
-        # List components
-        r = client.get("/api/components")
-        assert r.status_code == 200
-        assert len(r.json()) == 8
-
-        # List invariants
-        r = client.get("/api/invariants")
-        assert r.status_code == 200
-        assert len(r.json()) == 4
-
-        # List paths
-        r = client.get("/api/paths")
-        assert r.status_code == 200
-        assert len(r.json()) == 10
-
         # Login as analyst to obtain bearer token
         login_res = client.post(
             "/api/auth/login",
@@ -159,6 +144,21 @@ def test_api_endpoints_live():
         assert login_res.status_code == 200
         token = login_res.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
+
+        # List components (requires auth)
+        r = client.get("/api/components", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 8
+
+        # List invariants (requires auth)
+        r = client.get("/api/invariants", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 4
+
+        # List paths (requires auth)
+        r = client.get("/api/paths", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 10
 
         # Traffic simulation (requires auth)
         r = client.post("/api/traffic/simulate", json={"packet_count": 500}, headers=headers)
