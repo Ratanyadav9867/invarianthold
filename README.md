@@ -22,9 +22,7 @@ Traditional security platforms respond with one of two extremes:
 1. **Deterministic Invariant Engine (Source of Truth)**: Evaluates whether all required security controls for an invariant are present and operational on each specific traffic path.
 2. **Targeted Fail-Safe**: Isolates *only* the affected unsafe paths (e.g. 3 PCI paths blocked), while keeping unrelated safe traffic (e.g. 7 web and database paths, 70.0%) operational.
 3. **Safe Rerouting**: Discovers alternate candidate paths (e.g. redundant `ENC-02`) and verifies that the candidate route is `GUARANTEED` *before* migrating traffic. Candidate paths with `NO_POLICY`, `VIOLATED`, `BLOCKED`, or `AT_RISK` are strictly rejected.
-4. **Ground-Truth Traffic Verification**: Injects configurable virtual packet flows (100 to 1,000+ packets) to prove the central safety assertion:
-   $$\text{unsafe\_traffic\_delivered} == 0$$
-   Unsafe traffic delivery is dynamically computed from actual packet delivery outcomes, never hardcoded.
+4. Ground-Truth Traffic Verification: Injects configurable virtual packet flows (100 to 1,000+ packets) to prove the central safety assertion: `unsafe_traffic_delivered == 0`
 5. **Advisory ML Anomaly Detection**: `scikit-learn` Isolation Forest detects failure bursts and telemetry spikes to assist SecOps risk scoring without ever overriding deterministic security decisions.
 6. **Tamper-Evident SHA-256 Hash-Chained Audit Ledger**: Cryptographic hash chaining records every administrative mutation and security decision with automated tamper detection.
 
