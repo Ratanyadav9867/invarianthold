@@ -1,5 +1,6 @@
 import os
 import pytest
+from sqlalchemy.pool import StaticPool
 from app.core.topology_seed import seed_database
 from app.database import Base
 from sqlalchemy import create_engine
