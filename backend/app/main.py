@@ -1,8 +1,12 @@
 from contextlib import asynccontextmanager
 import os
 import secrets
+import logging
 import hmac
 import secrets
+
+logger = logging.getLogger(__name__)
+
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
