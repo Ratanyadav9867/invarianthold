@@ -1,3 +1,4 @@
+from typing import List
 from app.config import settings
 from app.core.security import (
     create_access_token,
