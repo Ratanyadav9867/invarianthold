@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field, Field_validator
+from pydantic import BaseModel, Field,field_validator
 
 
 # Auth schemas
