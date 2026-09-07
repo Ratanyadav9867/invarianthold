@@ -1,6 +1,15 @@
+import re
+
 from app.api.deps import require_auth, require_role
 from app.config import settings
-from app.core.security import create_access_token, verify_password, get_password_hash
+from app.core.security import (
+    create_access_token,
+    verify_password,
+    get_password_hash,
+    is_login_locked,
+    record_failed_login,
+    clear_failed_logins,
+)
 from app.core.topology_seed import seed_database
 from app.database import get_db
 from app.models.audit import AuditLog
@@ -31,6 +40,10 @@ from sqlalchemy.orm import Session
 
 router = APIRouter()
 
+# Component IDs must be alphanumeric plus dash/underscore only (e.g. "ENC-01").
+# Blocks path traversal (`../`), slashes, and other injection-prone characters.
+SAFE_ID_REGEX = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
 # ----------------------------------------------------
 # 1. AUTHENTICATION & USERS
 # ----------------------------------------------------
@@ -47,6 +60,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         (User.username == req.username) | (User.email == req.username)
     ).first()
     if not user:
+        record_failed_login(req.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password."
@@ -67,6 +81,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
             db.commit()
 
     if not is_valid:
+        record_failed_login(req.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password."
@@ -329,7 +344,7 @@ def get_audit_logs(
 
 @router.get("/audit/verify")
 @router.post("/audit/verify")
-def verify_audit_ledger(db: Session = Depends(get_db)):
+def verify_audit_ledger(db: Session = Depends(get_db), user: User = Depends(require_auth)):
     return AuditEngine.verify_integrity(db)
 
 # ----------------------------------------------------
